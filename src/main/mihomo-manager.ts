@@ -14,6 +14,7 @@ import zlib from 'node:zlib';
 import { app } from 'electron';
 import * as yaml from 'js-yaml';
 import type { ProxyNode } from '../types';
+import { buildEnvMihomoConfig } from './proxy-guard/mihomo-config';
 
 // ── 目录 ──────────────────────────────────────────────────────────────────────
 
@@ -247,18 +248,22 @@ interface ClashConfig {
   proxies?: Array<Record<string, unknown>>;
 }
 
+/** 解析节点 rawYaml：可能是单个对象，也可能是只含一个元素的数组（订阅解析时的格式） */
+function parseProxyYaml(rawYaml: string): Array<Record<string, unknown>> {
+  try {
+    const parsed = yaml.load(rawYaml);
+    const list = Array.isArray(parsed) ? parsed : [parsed];
+    return list.filter((p): p is Record<string, unknown> => !!p && typeof p === 'object' && !!(p as Record<string, unknown>)['name']);
+  } catch {
+    return [];
+  }
+}
+
 /**
- * 从备份订阅 YAML 生成 mihomo 运行配置。
- * 当备份不存在时，退回到 rawYaml（单节点配置）。
+ * 读取订阅备份中的代理列表。
+ * 当备份不存在时，退回到节点自身的 rawYaml。
  */
-function buildMihomoConfig(
-  sourceId: string,
-  selectedNodeName: string,
-  socksPort: number,
-  controlPort: number,
-  mode: 'env' | 'test' = 'env',
-  explicitProxyYamls?: string[],
-): string {
+function loadSourceProxies(sourceId: string, explicitProxyYamls?: string[]): Array<Record<string, unknown>> {
   let proxies: Array<Record<string, unknown>> = [];
 
   const backupPath = getSubsBackupPath(sourceId);
@@ -276,38 +281,37 @@ function buildMihomoConfig(
 
   // Fallback: build proxies list from individual node rawYaml strings
   if (proxies.length === 0 && explicitProxyYamls?.length) {
-    for (const rawYaml of explicitProxyYamls) {
-      if (!rawYaml) continue;
-      try {
-        const p = yaml.load(rawYaml) as Record<string, unknown>;
-        if (p && typeof p === 'object' && p['name']) proxies.push(p);
-      } catch { /* ignore malformed yaml */ }
-    }
+    proxies = explicitProxyYamls.filter(Boolean).flatMap(parseProxyYaml);
     if (proxies.length > 0) {
       console.log(`[MihomoManager] Built config from ${proxies.length} explicit proxy yamls (backup not found)`);
     }
   }
-
-  // 确保有 selectedNodeName 对应的代理（若备份不可用则啥都没有，mihomo 不会启动）
-  const selectedExists = proxies.some(p => p['name'] === selectedNodeName);
-  if (!selectedExists && proxies.length === 0) {
+  if (proxies.length === 0) {
     console.warn(`[MihomoManager] No proxies available for source ${sourceId}`);
   }
+  return proxies;
+}
 
-  const config: Record<string, unknown> = {
+/** 测速用配置：global 模式，只需加载全部代理 */
+function buildTestMihomoConfig(sourceId: string, socksPort: number, controlPort: number, explicitProxyYamls?: string[]): string {
+  return yaml.dump({
     'socks-port': socksPort,
     'allow-lan': false,
-    'mode': mode === 'test' ? 'global' : 'rule',
+    'mode': 'global',
     'log-level': 'silent',
     'external-controller': `127.0.0.1:${controlPort}`,
-    'proxies': proxies,
-  };
+    'proxies': loadSourceProxies(sourceId, explicitProxyYamls),
+  });
+}
 
-  if (mode === 'env') {
-    config['rules'] = [`MATCH,${selectedNodeName}`];
-  }
-
-  return yaml.dump(config);
+/** 环境用配置：所有连接只经所选节点；备份中缺少该节点时用节点自身的 rawYaml 补上 */
+function buildEnvConfigYaml(
+  sourceId: string, selectedNodeName: string, socksPort: number, controlPort: number, nodeRawYaml?: string,
+): string {
+  const proxies = loadSourceProxies(sourceId, nodeRawYaml ? [nodeRawYaml] : undefined);
+  const hasSelected = proxies.some(p => p['name'] === selectedNodeName);
+  const fallback = !hasSelected && nodeRawYaml ? parseProxyYaml(nodeRawYaml).filter(p => p['name'] === selectedNodeName) : [];
+  return yaml.dump(buildEnvMihomoConfig([...proxies, ...fallback], selectedNodeName, socksPort, controlPort));
 }
 
 // ── 每环境 mihomo 实例 ─────────────────────────────────────────────────────────
@@ -341,13 +345,14 @@ function waitForControlApi(controlPort: number, maxMs = 8000): Promise<void> {
 }
 
 /**
- * 为指定环境启动 mihomo 进程。
+ * 为指定环境启动 mihomo 进程。启动失败时结束进程并抛错，调用方据此拒绝启动浏览器。
  * @returns socks5 监听端口
  */
 export async function startMihomoForEnv(
   envId: string,
   sourceId: string,
   selectedNodeName: string,
+  nodeRawYaml?: string,
 ): Promise<number> {
   // 如果已在运行，直接返回端口
   const existing = runningInstances.get(envId);
@@ -361,7 +366,7 @@ export async function startMihomoForEnv(
   const socksPort = await getFreePortInRange(40000, 49999);
   const controlPort = await getFreePortInRange(50000, 50999);
 
-  const configContent = buildMihomoConfig(sourceId, selectedNodeName, socksPort, controlPort, 'env');
+  const configContent = buildEnvConfigYaml(sourceId, selectedNodeName, socksPort, controlPort, nodeRawYaml);
 
   const profileDir = path.join(app.getPath('userData'), 'profiles', envId);
   fs.mkdirSync(profileDir, { recursive: true });
@@ -376,16 +381,21 @@ export async function startMihomoForEnv(
   const instance: MihomoInstance = { process: proc, socksPort, controlPort };
   runningInstances.set(envId, instance);
 
+  // 进程提前退出（配置无效等）或无法执行时立即失败，不必等到超时
+  const failed = new Promise<never>((_resolve, reject) => {
+    proc.once('error', reject);
+    proc.once('exit', code => reject(new Error(`mihomo 进程已退出（code ${code}），配置可能无效`)));
+  });
   proc.on('exit', () => {
-    runningInstances.delete(envId);
+    if (runningInstances.get(envId) === instance) runningInstances.delete(envId);
   });
 
-  // 等待控制 API 就绪
   try {
-    await waitForControlApi(controlPort);
+    await Promise.race([waitForControlApi(controlPort), failed]);
   } catch (e) {
-    console.error(`[MihomoManager] Mihomo control API timeout for env ${envId}:`, e);
-    // 不 throw，允许继续（Chrome 可能仍能连接 socks5）
+    console.error(`[MihomoManager] Mihomo failed to start for env ${envId}:`, e);
+    stopMihomoForEnv(envId);
+    throw new Error(`代理核心 mihomo 启动失败，已阻止浏览器启动以免泄漏真实 IP：${(e as Error).message}`);
   }
 
   return socksPort;
@@ -458,7 +468,7 @@ async function runWithTempMihomo<T>(
   const controlPort = await getFreePortInRange(50000, 50999);
 
   // 用 mode=global 配置，只需加载所有代理
-  const configContent = buildMihomoConfig(sourceId, '', socksPort, controlPort, 'test', explicitProxyYamls);
+  const configContent = buildTestMihomoConfig(sourceId, socksPort, controlPort, explicitProxyYamls);
   const tmpConfig = path.join(getMihomoDir(), `test-${Date.now()}.yaml`);
   fs.writeFileSync(tmpConfig, configContent, 'utf-8');
 

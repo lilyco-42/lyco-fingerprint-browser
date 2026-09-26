@@ -7,6 +7,7 @@ import { app } from 'electron';
 import type { Environment, EnvRuntime } from '../types';
 import { CdpClient } from './cdp-client';
 import { startMihomoForEnv, stopMihomoForEnv } from './mihomo-manager';
+import { buildProxyArgs } from './proxy-guard/browser-proxy';
 
 const CHROME_PATHS: Record<string, string[]> = {
   darwin: [
@@ -73,6 +74,31 @@ function waitForDevTools(port: number, maxMs = 10000): Promise<void> {
   });
 }
 
+interface PreparedProxy {
+  args: string[];
+  socksPort?: number;
+}
+
+/**
+ * 按环境的代理设置准备启动参数。任何异常（未选线路、节点失效、mihomo 启动失败、地址非法）都抛错，
+ * 由调用方拒绝启动浏览器，绝不退化为直连。
+ */
+async function prepareProxy(env: Environment): Promise<PreparedProxy> {
+  if (env.proxyMode === 'simple') {
+    return { args: buildProxyArgs({ kind: 'simple', raw: env.proxySimple }) };
+  }
+  if (env.proxyMode !== 'mihomo') return { args: [] };
+
+  if (!env.proxyNodeId) throw new Error('该环境未选择代理线路，已阻止启动以免使用真实 IP');
+  const { getNode } = await import('./store');
+  const node = getNode(env.proxyNodeId);
+  if (!node) {
+    throw new Error('该环境的代理节点已不存在（订阅可能已被删除或更新），已阻止启动，请在“编辑”中重新选择线路');
+  }
+  const socksPort = await startMihomoForEnv(env.id, node.sourceId, node.name, node.rawYaml);
+  return { args: buildProxyArgs({ kind: 'mihomo', socksPort }), socksPort };
+}
+
 interface RunningInstance {
   process: ChildProcess;
   cdpClient: CdpClient | null;
@@ -109,7 +135,11 @@ export async function launchEnv(
     return running.get(env.id)!.runtime;
   }
 
-  const debugPort = await getFreePort();
+  const proxy = await prepareProxy(env);
+  const debugPort = await getFreePort().catch((e: Error) => {
+    stopMihomoForEnv(env.id);
+    throw e;
+  });
   const userDataDir = path.join(app.getPath('userData'), 'profiles', env.id, 'chrome_data');
   fs.mkdirSync(userDataDir, { recursive: true });
 
@@ -127,28 +157,13 @@ export async function launchEnv(
     '--use-mock-keychain',
     '--disable-background-timer-throttling',
     '--disable-renderer-backgrounding',
+    ...proxy.args,
   ];
 
   if (env.userAgent) {
     args.push(`--user-agent=${env.userAgent}`);
   }
 
-  let mihomoSocksPort: number | undefined;
-  if (env.proxyMode === 'mihomo' && env.proxyNodeId) {
-    try {
-      const storeModule = await import('./store');
-      const nodes = storeModule.listNodes(env.proxySourceId || undefined);
-      const node = nodes.find(n => n.id === env.proxyNodeId);
-      if (node) {
-        mihomoSocksPort = await startMihomoForEnv(env.id, node.sourceId, node.name);
-        args.push(`--proxy-server=socks5://127.0.0.1:${mihomoSocksPort}`);
-      }
-    } catch (e) {
-      console.error(`[ChromeManager] Failed to start mihomo for env ${env.id}:`, e);
-    }
-  } else if (env.proxyMode === 'simple' && env.proxySimple) {
-    args.push(`--proxy-server=${env.proxySimple}`);
-  }
   if (homePage) {
     args.push(homePage);
   }
@@ -160,17 +175,23 @@ export async function launchEnv(
     running: true,
     pid: chromeProcess.pid,
     debugPort,
-    proxyPort: mihomoSocksPort,
+    proxyPort: proxy.socksPort,
     launchedAt: new Date().toISOString(),
   };
 
   const instance: RunningInstance = { process: chromeProcess, cdpClient: null, runtime };
   running.set(env.id, instance);
 
-  chromeProcess.on('exit', () => {
+  const onChromeGone = (): void => {
     instance.cdpClient?.close();
-    running.delete(env.id);
+    stopMihomoForEnv(env.id);
+    if (running.get(env.id) === instance) running.delete(env.id);
     onStatusChange?.(env.id, { envId: env.id, running: false });
+  };
+  chromeProcess.once('exit', onChromeGone);
+  chromeProcess.once('error', (e: Error) => {
+    console.error(`[ChromeManager] Failed to spawn Chrome for ${env.name}:`, e.message);
+    onChromeGone();
   });
 
   // Connect CDP asynchronously

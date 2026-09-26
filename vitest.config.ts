@@ -6,7 +6,7 @@ export default defineConfig({
     include: ['src/**/*.test.ts'],
     environment: 'node',
     coverage: {
-      include: ['src/main/env-bundle/**/*.ts'],
+      include: ['src/main/env-bundle/**/*.ts', 'src/main/proxy-guard/**/*.ts'],
       exclude: ['src/**/*.test.ts', 'src/**/*.test-helper.ts'],
     },
   },

@@ -92,6 +92,13 @@
   - 支持导入订阅链接或本地 YAML 配置文件
   - 节点延迟测试（TCP Ping），按延迟排序筛选
   - 每个环境可绑定不同的订阅源和节点
+- **防真实 IP 泄漏**（直连代理与 Mihomo 均生效）：
+  - 启动失败即拒绝打开浏览器：未选线路、节点已失效、Mihomo 启动失败或代理地址非法时直接报错，绝不退化为直连
+  - 禁用本机 DNS 解析，域名一律交由代理远程解析；禁用 QUIC；WebRTC 仅允许经代理的连接，不再通过 STUN 暴露公网 IP
+  - 每个环境的 Mihomo 只包含所选节点，所有流量 `MATCH` 到该节点，不存在直连规则
+  - 刷新订阅时按节点名称保留原节点 ID，环境绑定的线路不会因刷新而失效
+  - 直连代理仅支持 `http` / `https` / `socks5`；SOCKS4 会在本机解析域名、Chrome 也不支持带账号密码的代理地址，因此会被拒绝
+  - 代理模式为「无」的环境按设计直连；具备代理权限的浏览器扩展仍可能改写代理，请谨慎安装
 
 ### 💉 脚本注入
 - 编写自定义 JavaScript，通过 CDP 注入到指定运行中的环境
@@ -267,6 +274,13 @@ git push origin v1.0.0
   - 支援匯入訂閱連結或本地 YAML 設定檔
   - 節點延遲測試（TCP Ping），依延遲排序篩選
   - 每個環境可綁定不同的訂閱來源和節點
+- **防真實 IP 洩漏**（直連代理與 Mihomo 皆生效）：
+  - 啟動失敗即拒絕開啟瀏覽器：未選線路、節點已失效、Mihomo 啟動失敗或代理位址不合法時直接報錯，絕不退化為直連
+  - 停用本機 DNS 解析，網域一律交由代理遠端解析；停用 QUIC；WebRTC 僅允許經代理的連線，不再透過 STUN 暴露公網 IP
+  - 每個環境的 Mihomo 只包含所選節點，所有流量 `MATCH` 到該節點，不存在直連規則
+  - 重新整理訂閱時依節點名稱保留原節點 ID，環境綁定的線路不會因此失效
+  - 直連代理僅支援 `http` / `https` / `socks5`；SOCKS4 會在本機解析網域、Chrome 也不支援帶帳號密碼的代理位址，因此會被拒絕
+  - 代理模式為「無」的環境依設計直連；具備代理權限的瀏覽器擴充功能仍可能改寫代理，請謹慎安裝
 
 ### 💉 腳本注入
 - 撰寫自訂 JavaScript，透過 CDP 注入至指定執行中的環境
@@ -442,6 +456,13 @@ Every parameter supports **random generation** or **manual override**, with 16 b
   - Import subscription URLs or local YAML config files
   - TCP Ping latency test with latency-sorted node filtering
   - Each environment can be bound to a different subscription source and node
+- **Real-IP leak protection** (applies to both direct proxies and Mihomo):
+  - Fail-closed launch: if no line is selected, the node is gone, Mihomo fails to start, or the proxy address is invalid, the browser is not started — it never falls back to a direct connection
+  - Local DNS resolution is disabled so hostnames are resolved by the proxy; QUIC is disabled; WebRTC may only use proxied connections, so STUN can no longer expose your public IP
+  - Each environment's Mihomo instance contains only the selected node and routes everything via `MATCH` to it — no direct rules
+  - Refreshing a subscription keeps node IDs by name, so environments stay bound to their lines
+  - Direct proxies accept only `http` / `https` / `socks5`; SOCKS4 (local DNS) and proxy URLs with credentials (unsupported by Chrome) are rejected
+  - Environments whose proxy mode is "None" connect directly by design; browser extensions with the proxy permission can still override the proxy, so install them with care
 
 ### 💉 Script Injection
 - Write custom JavaScript and inject it into any running environment via CDP

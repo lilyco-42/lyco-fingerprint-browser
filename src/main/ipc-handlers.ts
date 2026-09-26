@@ -13,6 +13,7 @@ import {
   type StatusCallback,
 } from './chrome-manager';
 import { registerEnvTransferHandlers } from './ipc-env-transfer';
+import { preserveNodeIds } from './proxy-guard/node-ids';
 import { fetchSubscription, parseYamlContent } from './subscription';
 import {
   getMihomoPath, getMihomoDir,
@@ -184,13 +185,13 @@ export function registerHandlers(): void {
     if (!source) throw new Error('订阅源不存在');
     if (source.type === 'subscription') {
       const config = store.getConfig();
-      const nodes = await fetchSubscription(source.url, source.id, config.subscriptionUserAgent);
+      const nodes = preserveNodeIds(store.listNodes(source.id), await fetchSubscription(source.url, source.id, config.subscriptionUserAgent));
       store.saveNodes(source.id, nodes);
       source.nodeCount = nodes.length;
     } else {
       if (!source.url) throw new Error('该代理源由导入生成，没有可刷新的原始文件');
       const content = fs.readFileSync(source.url, 'utf-8');
-      const nodes = parseYamlContent(content, source.id);
+      const nodes = preserveNodeIds(store.listNodes(source.id), parseYamlContent(content, source.id));
       store.saveNodes(source.id, nodes);
       source.nodeCount = nodes.length;
     }
