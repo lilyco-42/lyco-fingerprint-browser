@@ -185,6 +185,7 @@ body {
 }
 .status-dot.running { background: #00bb00; }
 .status-dot.stopped { background: #cccccc; }
+.status-dot.proxy-down { background: #e81123; box-shadow: 0 0 0 2px #ffd0d0; }
 
 /* 危险按钮 */
 .btn-danger { color: #cc0000; }

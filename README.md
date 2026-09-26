@@ -97,6 +97,8 @@
   - 禁用本机 DNS 解析，域名一律交由代理远程解析；禁用 QUIC；WebRTC 仅允许经代理的连接，不再通过 STUN 暴露公网 IP
   - 每个环境的 Mihomo 只包含所选节点，所有流量 `MATCH` 到该节点，不存在直连规则
   - 刷新订阅时按节点名称保留原节点 ID，环境绑定的线路不会因刷新而失效
+  - 代理故障时，页面显示本地生成的提示页（代理核心已停止 / 线路不可用 / 无法连接代理服务器等），说明原因并提供「重试」；提示页不发出任何网络请求
+  - mihomo 意外退出或线路测速失败时，环境列表显示红色「代理异常」并弹出提示，可一键「重启代理」（沿用原端口，无需关闭浏览器）；页面恢复正常加载后异常标记自动清除
   - 直连代理仅支持 `http` / `https` / `socks5`；SOCKS4 会在本机解析域名、Chrome 也不支持带账号密码的代理地址，因此会被拒绝
   - 代理模式为「无」的环境按设计直连；具备代理权限的浏览器扩展仍可能改写代理，请谨慎安装
 
@@ -279,6 +281,8 @@ git push origin v1.0.0
   - 停用本機 DNS 解析，網域一律交由代理遠端解析；停用 QUIC；WebRTC 僅允許經代理的連線，不再透過 STUN 暴露公網 IP
   - 每個環境的 Mihomo 只包含所選節點，所有流量 `MATCH` 到該節點，不存在直連規則
   - 重新整理訂閱時依節點名稱保留原節點 ID，環境綁定的線路不會因此失效
+  - 代理故障時，頁面顯示本地產生的提示頁（代理核心已停止 / 線路不可用 / 無法連線代理伺服器等），說明原因並提供「重試」；提示頁不發出任何網路請求
+  - mihomo 意外結束或線路測速失敗時，環境清單顯示紅色「代理異常」並跳出提示，可一鍵「重啟代理」（沿用原連接埠，無需關閉瀏覽器）；頁面恢復正常載入後異常標記自動清除
   - 直連代理僅支援 `http` / `https` / `socks5`；SOCKS4 會在本機解析網域、Chrome 也不支援帶帳號密碼的代理位址，因此會被拒絕
   - 代理模式為「無」的環境依設計直連；具備代理權限的瀏覽器擴充功能仍可能改寫代理，請謹慎安裝
 
@@ -461,6 +465,8 @@ Every parameter supports **random generation** or **manual override**, with 16 b
   - Local DNS resolution is disabled so hostnames are resolved by the proxy; QUIC is disabled; WebRTC may only use proxied connections, so STUN can no longer expose your public IP
   - Each environment's Mihomo instance contains only the selected node and routes everything via `MATCH` to it — no direct rules
   - Refreshing a subscription keeps node IDs by name, so environments stay bound to their lines
+  - When the proxy fails, the page shows a locally generated notice (proxy core stopped / line unavailable / proxy server unreachable, etc.) explaining why, with a Retry button; the notice page itself makes no network requests
+  - If Mihomo exits unexpectedly or the line fails its latency test, the environment list shows a red "proxy error" state with a toast, and one click on "Restart proxy" brings it back on the same port without closing the browser; the flag clears once pages load normally again
   - Direct proxies accept only `http` / `https` / `socks5`; SOCKS4 (local DNS) and proxy URLs with credentials (unsupported by Chrome) are rejected
   - Environments whose proxy mode is "None" connect directly by design; browser extensions with the proxy permission can still override the proxy, so install them with care
 

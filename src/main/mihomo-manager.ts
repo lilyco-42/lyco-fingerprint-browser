@@ -320,6 +320,30 @@ interface MihomoInstance {
   process: ChildProcess;
   socksPort: number;
   controlPort: number;
+  nodeName: string;
+}
+
+export interface StartMihomoOptions {
+  /** 指定 socks 端口（重启代理时沿用浏览器已绑定的端口），端口被占用则失败 */
+  socksPort?: number;
+  /** 启动成功后进程非主动停止而退出时回调 */
+  onUnexpectedExit?: (code: number | null) => void;
+}
+
+function isPortFree(port: number): Promise<boolean> {
+  return new Promise(resolve => {
+    const server = net.createServer();
+    server.once('error', () => resolve(false));
+    server.listen(port, '127.0.0.1', () => server.close(() => resolve(true)));
+  });
+}
+
+async function pickSocksPort(requested?: number): Promise<number> {
+  if (requested === undefined) return getFreePortInRange(40000, 49999);
+  if (!(await isPortFree(requested))) {
+    throw new Error(`代理端口 ${requested} 已被其他程序占用，请关闭该环境后重新启动`);
+  }
+  return requested;
 }
 
 const runningInstances = new Map<string, MihomoInstance>();
@@ -353,6 +377,7 @@ export async function startMihomoForEnv(
   sourceId: string,
   selectedNodeName: string,
   nodeRawYaml?: string,
+  options: StartMihomoOptions = {},
 ): Promise<number> {
   // 如果已在运行，直接返回端口
   const existing = runningInstances.get(envId);
@@ -363,7 +388,7 @@ export async function startMihomoForEnv(
     throw new Error('未找到 mihomo 可执行文件，请在设置中下载安装 Mihomo');
   }
 
-  const socksPort = await getFreePortInRange(40000, 49999);
+  const socksPort = await pickSocksPort(options.socksPort);
   const controlPort = await getFreePortInRange(50000, 50999);
 
   const configContent = buildEnvConfigYaml(sourceId, selectedNodeName, socksPort, controlPort, nodeRawYaml);
@@ -378,16 +403,23 @@ export async function startMihomoForEnv(
     stdio: 'ignore',
   });
 
-  const instance: MihomoInstance = { process: proc, socksPort, controlPort };
+  const instance: MihomoInstance = { process: proc, socksPort, controlPort, nodeName: selectedNodeName };
   runningInstances.set(envId, instance);
+  let started = false;
 
   // 进程提前退出（配置无效等）或无法执行时立即失败，不必等到超时
   const failed = new Promise<never>((_resolve, reject) => {
     proc.once('error', reject);
     proc.once('exit', code => reject(new Error(`mihomo 进程已退出（code ${code}），配置可能无效`)));
   });
-  proc.on('exit', () => {
-    if (runningInstances.get(envId) === instance) runningInstances.delete(envId);
+  // stopMihomoForEnv 会先移除登记再结束进程，因此仍处于登记状态的退出都是意外退出
+  proc.on('exit', code => {
+    if (runningInstances.get(envId) !== instance) return;
+    runningInstances.delete(envId);
+    if (started) {
+      console.error(`[MihomoManager] Mihomo for env ${envId} exited unexpectedly (code ${code})`);
+      options.onUnexpectedExit?.(code);
+    }
   });
 
   try {
@@ -398,17 +430,23 @@ export async function startMihomoForEnv(
     throw new Error(`代理核心 mihomo 启动失败，已阻止浏览器启动以免泄漏真实 IP：${(e as Error).message}`);
   }
 
+  started = true;
   return socksPort;
+}
+
+export function isMihomoRunning(envId: string): boolean {
+  return runningInstances.has(envId);
 }
 
 /** 停止指定环境的 mihomo 进程 */
 export function stopMihomoForEnv(envId: string): void {
   const instance = runningInstances.get(envId);
-  if (!instance) return;
-  try { instance.process.kill(); } catch { /* already dead */ }
-  runningInstances.delete(envId);
+  if (instance) {
+    runningInstances.delete(envId);
+    try { instance.process.kill(); } catch { /* already dead */ }
+  }
 
-  // 清理临时配置
+  // 清理临时配置（进程已自行退出时也要清理）
   try {
     const configPath = path.join(app.getPath('userData'), 'profiles', envId, 'mihomo.yaml');
     if (fs.existsSync(configPath)) fs.rmSync(configPath, { force: true });
@@ -427,11 +465,11 @@ export function stopAllMihomo(): void {
 const TEST_URL = 'http://www.gstatic.com/generate_204';
 const TEST_TIMEOUT = 5000;
 
-function callDelayApi(controlPort: number, proxyName: string): Promise<number> {
+function callDelayApi(controlPort: number, proxyName: string, timeout = TEST_TIMEOUT): Promise<number> {
   return new Promise((resolve) => {
     const encodedName = encodeURIComponent(proxyName);
     const encodedUrl = encodeURIComponent(TEST_URL);
-    const urlPath = `/proxies/${encodedName}/delay?timeout=${TEST_TIMEOUT}&url=${encodedUrl}`;
+    const urlPath = `/proxies/${encodedName}/delay?timeout=${timeout}&url=${encodedUrl}`;
     const req = http.get({
       host: '127.0.0.1',
       port: controlPort,
@@ -450,8 +488,17 @@ function callDelayApi(controlPort: number, proxyName: string): Promise<number> {
       });
     });
     req.on('error', () => resolve(-1));
-    req.setTimeout(TEST_TIMEOUT + 2000, () => { req.destroy(); resolve(-1); });
+    req.setTimeout(timeout + 2000, () => { req.destroy(); resolve(-1); });
   });
+}
+
+const ENV_PROBE_TIMEOUT = 3000;
+
+/** 经环境自己的 mihomo 测试所选节点延迟；mihomo 未运行或节点不可用时返回 -1 */
+export function probeEnvNode(envId: string): Promise<number> {
+  const instance = runningInstances.get(envId);
+  if (!instance) return Promise.resolve(-1);
+  return callDelayApi(instance.controlPort, instance.nodeName, ENV_PROBE_TIMEOUT);
 }
 
 async function runWithTempMihomo<T>(

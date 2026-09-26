@@ -33,6 +33,7 @@ contextBridge.exposeInMainWorld('api', {
   envLaunch: (id: string): Promise<EnvRuntime> => ipcRenderer.invoke('env:launch', id),
   envClose: (id: string): Promise<EnvRuntime> => ipcRenderer.invoke('env:close', id),
   envStatusAll: (): Promise<Record<string, EnvRuntime>> => ipcRenderer.invoke('env:statusAll'),
+  envRestartProxy: (id: string): Promise<EnvRuntime> => ipcRenderer.invoke('env:restartProxy', id),
   envRegenerateFP: (id: string): Promise<Environment> => ipcRenderer.invoke('env:regenerateFP', id),
   envExport: (ids: string[], opts: ExportEnvOptions): Promise<ExportEnvResult | null> =>
     ipcRenderer.invoke('env:export', ids, opts),

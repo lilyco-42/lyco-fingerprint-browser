@@ -2,6 +2,7 @@ import WebSocket from 'ws';
 import http from 'node:http';
 import type { FingerprintConfig } from '../types';
 import { buildFingerprintScript, getPlatformVersionForUserAgentData } from './fingerprint';
+import { ProxyFailureWatcher, type WatcherHooks } from './proxy-guard/failure-watcher';
 
 interface CdpMessage {
   id?: number;
@@ -30,12 +31,18 @@ export class CdpClient {
   private pending = new Map<number, PendingCmd>();
   private pageSessions: string[] = [];
   private fingerprintedSessions = new Set<string>();
+  private failureWatcher: ProxyFailureWatcher | null;
 
   constructor(
     private debugPort: number,
     private fingerprint: FingerprintConfig,
     private userAgent: string,
-  ) {}
+    failureHooks?: WatcherHooks,
+  ) {
+    this.failureWatcher = failureHooks
+      ? new ProxyFailureWatcher((method, params, sessionId) => this.send(method, params, sessionId), failureHooks)
+      : null;
+  }
 
   async connect(): Promise<void> {
     const url = await this.getWebSocketUrl();
@@ -106,6 +113,7 @@ export class CdpClient {
         }) as { sessionId?: string };
         const sessionId = attached.sessionId;
         if (!sessionId) continue;
+        this.failureWatcher?.attach(sessionId, target.targetId);
         await this.applyFingerprint(sessionId);
         if (target.url && !target.url.startsWith('chrome://') && !target.url.startsWith('devtools://')) {
           await this.send('Page.reload', { ignoreCache: true }, sessionId).catch(() => { /* best-effort */ });
@@ -129,16 +137,20 @@ export class CdpClient {
         }
       }
     } else if (msg.method === 'Target.attachedToTarget') {
-      const { sessionId, targetInfo } = msg.params as { sessionId: string; targetInfo: { type: string } };
+      const { sessionId, targetInfo } = msg.params as { sessionId: string; targetInfo: { type: string; targetId: string } };
       if (targetInfo?.type === 'page' && !this.pageSessions.includes(sessionId)) {
         this.pageSessions.push(sessionId);
       }
+      if (targetInfo?.type === 'page') this.failureWatcher?.attach(sessionId, targetInfo.targetId);
       // Apply fingerprint to newly attached target
       this.applyFingerprint(sessionId).catch(() => { /* best-effort */ });
     } else if (msg.method === 'Target.detachedFromTarget') {
       const { sessionId } = msg.params as { sessionId: string };
       this.pageSessions = this.pageSessions.filter(s => s !== sessionId);
       this.fingerprintedSessions.delete(sessionId);
+      this.failureWatcher?.detach(sessionId);
+    } else if (msg.method) {
+      this.failureWatcher?.handleEvent(msg.method, (msg.params ?? {}) as Record<string, unknown>, msg.sessionId);
     }
   }
 

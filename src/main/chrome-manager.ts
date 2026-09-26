@@ -6,8 +6,11 @@ import fs from 'node:fs';
 import { app } from 'electron';
 import type { Environment, EnvRuntime } from '../types';
 import { CdpClient } from './cdp-client';
-import { startMihomoForEnv, stopMihomoForEnv } from './mihomo-manager';
-import { buildProxyArgs } from './proxy-guard/browser-proxy';
+import { startMihomoForEnv, stopMihomoForEnv, isMihomoRunning, probeEnvNode } from './mihomo-manager';
+import { buildProxyArgs, parseSimpleProxy } from './proxy-guard/browser-proxy';
+import { CORE_DOWN_ISSUE, diagnoseProxyFailure, shouldDiagnose, type ProxyFailureDiagnosis } from './proxy-guard/proxy-failure';
+import { buildProxyErrorPage } from './proxy-guard/error-page';
+import type { FailureInfo, WatcherHooks } from './proxy-guard/failure-watcher';
 
 const CHROME_PATHS: Record<string, string[]> = {
   darwin: [
@@ -74,9 +77,15 @@ function waitForDevTools(port: number, maxMs = 10000): Promise<void> {
   });
 }
 
+/** 环境当前使用的代理线路，用于故障诊断、提示页展示与重启代理 */
+type ProxyLine =
+  | { mode: 'mihomo'; sourceId: string; nodeName: string; rawYaml: string; label: string }
+  | { mode: 'simple'; label: string };
+
 interface PreparedProxy {
   args: string[];
   socksPort?: number;
+  line?: ProxyLine;
 }
 
 /**
@@ -85,29 +94,77 @@ interface PreparedProxy {
  */
 async function prepareProxy(env: Environment): Promise<PreparedProxy> {
   if (env.proxyMode === 'simple') {
-    return { args: buildProxyArgs({ kind: 'simple', raw: env.proxySimple }) };
+    const args = buildProxyArgs({ kind: 'simple', raw: env.proxySimple });
+    return { args, line: { mode: 'simple', label: parseSimpleProxy(env.proxySimple).server } };
   }
   if (env.proxyMode !== 'mihomo') return { args: [] };
 
   if (!env.proxyNodeId) throw new Error('该环境未选择代理线路，已阻止启动以免使用真实 IP');
-  const { getNode } = await import('./store');
+  const { getNode, listSources } = await import('./store');
   const node = getNode(env.proxyNodeId);
   if (!node) {
     throw new Error('该环境的代理节点已不存在（订阅可能已被删除或更新），已阻止启动，请在“编辑”中重新选择线路');
   }
-  const socksPort = await startMihomoForEnv(env.id, node.sourceId, node.name, node.rawYaml);
-  return { args: buildProxyArgs({ kind: 'mihomo', socksPort }), socksPort };
+  const sourceName = listSources().find(s => s.id === node.sourceId)?.name ?? '未知订阅';
+  const line: ProxyLine = {
+    mode: 'mihomo', sourceId: node.sourceId, nodeName: node.name, rawYaml: node.rawYaml, label: `${sourceName} - ${node.name}`,
+  };
+  const socksPort = await startMihomoLine(env.id, line);
+  return { args: buildProxyArgs({ kind: 'mihomo', socksPort }), socksPort, line };
+}
+
+function startMihomoLine(envId: string, line: Extract<ProxyLine, { mode: 'mihomo' }>, socksPort?: number): Promise<number> {
+  return startMihomoForEnv(envId, line.sourceId, line.nodeName, line.rawYaml, {
+    socksPort,
+    onUnexpectedExit: () => setProxyIssue(envId, CORE_DOWN_ISSUE),
+  });
 }
 
 interface RunningInstance {
   process: ChildProcess;
   cdpClient: CdpClient | null;
   runtime: EnvRuntime;
+  line?: ProxyLine;
+  onStatusChange?: StatusCallback;
 }
 
 const running = new Map<string, RunningInstance>();
 
 export type StatusCallback = (envId: string, runtime: EnvRuntime) => void;
+
+/** 更新环境的代理异常状态（undefined 表示恢复正常），有变化时通知界面 */
+function setProxyIssue(envId: string, proxyIssue: string | undefined): void {
+  const instance = running.get(envId);
+  if (!instance || instance.runtime.proxyIssue === proxyIssue) return;
+  instance.runtime = { ...instance.runtime, proxyIssue };
+  instance.onStatusChange?.(envId, instance.runtime);
+}
+
+async function diagnoseEnvFailure(envId: string, line: ProxyLine, errorText: string): Promise<ProxyFailureDiagnosis | null> {
+  if (line.mode === 'simple') return diagnoseProxyFailure({ mode: 'simple', errorText });
+  const coreRunning = isMihomoRunning(envId);
+  const nodeDelay = coreRunning ? await probeEnvNode(envId) : -1;
+  return diagnoseProxyFailure({ mode: 'mihomo', errorText, nodeName: line.nodeName, coreRunning, nodeDelay });
+}
+
+/** 页面因代理故障加载失败时：诊断原因、标记代理异常，并生成本地提示页 */
+function createFailureHooks(env: Environment, mode: ProxyLine['mode']): WatcherHooks {
+  return {
+    shouldHandle: errorText => shouldDiagnose(mode, errorText),
+    renderFailure: async (info: FailureInfo) => {
+      const line = running.get(env.id)?.line;
+      if (!line) return null;
+      const diagnosis = await diagnoseEnvFailure(env.id, line, info.errorText);
+      if (!diagnosis) return null;
+      if (diagnosis.issue) setProxyIssue(env.id, diagnosis.issue);
+      return buildProxyErrorPage({ envName: env.name, lineLabel: line.label, url: info.url, errorText: info.errorText, diagnosis });
+    },
+    onRecovered: () => {
+      // mihomo 已退出时不可能有经网络返回的文档，只清除其余异常
+      if (running.get(env.id)?.runtime.proxyIssue !== CORE_DOWN_ISSUE) setProxyIssue(env.id, undefined);
+    },
+  };
+}
 
 export function getRuntime(envId: string): EnvRuntime | null {
   return running.get(envId)?.runtime ?? null;
@@ -179,7 +236,7 @@ export async function launchEnv(
     launchedAt: new Date().toISOString(),
   };
 
-  const instance: RunningInstance = { process: chromeProcess, cdpClient: null, runtime };
+  const instance: RunningInstance = { process: chromeProcess, cdpClient: null, runtime, line: proxy.line, onStatusChange };
   running.set(env.id, instance);
 
   const onChromeGone = (): void => {
@@ -197,7 +254,7 @@ export async function launchEnv(
   // Connect CDP asynchronously
   waitForDevTools(debugPort, 8000)
     .then(() => {
-      const client = new CdpClient(debugPort, env.fingerprint, env.userAgent);
+      const client = new CdpClient(debugPort, env.fingerprint, env.userAgent, proxy.line ? createFailureHooks(env, proxy.line.mode) : undefined);
       return client.connect().then(() => {
         instance.cdpClient = client;
       });
@@ -208,6 +265,28 @@ export async function launchEnv(
 
   onStatusChange?.(env.id, runtime);
   return runtime;
+}
+
+/** 在浏览器已绑定的原端口上重新拉起 mihomo，浏览器无需关闭 */
+export async function restartEnvProxy(envId: string): Promise<EnvRuntime> {
+  const instance = running.get(envId);
+  if (!instance) throw new Error('环境未在运行');
+  const { line } = instance;
+  const socksPort = instance.runtime.proxyPort;
+  if (line?.mode !== 'mihomo' || !socksPort) throw new Error('该环境未使用订阅线路，无需重启代理');
+
+  stopMihomoForEnv(envId);
+  await startMihomoLine(envId, line, socksPort).catch((e: Error) => {
+    setProxyIssue(envId, CORE_DOWN_ISSUE);
+    throw e;
+  });
+  if (running.get(envId) !== instance) {
+    // 重启期间浏览器已关闭，不再保留代理进程
+    stopMihomoForEnv(envId);
+    throw new Error('环境已关闭');
+  }
+  setProxyIssue(envId, undefined);
+  return instance.runtime;
 }
 
 export function closeEnv(envId: string): void {

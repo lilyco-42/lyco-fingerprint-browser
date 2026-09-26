@@ -22,6 +22,7 @@ declare global {
       envDelete(id: string): Promise<void>;
       envLaunch(id: string): Promise<EnvRuntime>;
       envClose(id: string): Promise<EnvRuntime>;
+      envRestartProxy(id: string): Promise<EnvRuntime>;
       envStatusAll(): Promise<Record<string, EnvRuntime>>;
       envRegenerateFP(id: string): Promise<Environment>;
       envExport(ids: string[], opts: ExportEnvOptions): Promise<ExportEnvResult | null>;

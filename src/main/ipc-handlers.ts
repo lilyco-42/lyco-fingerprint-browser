@@ -9,7 +9,7 @@ import {
   generateFingerprintWithOverride,
 } from './fingerprint';
 import {
-  launchEnv, closeEnv, getAllRuntimes, detectChrome, getCdpClient, removeEnvProfile,
+  launchEnv, closeEnv, getAllRuntimes, detectChrome, getCdpClient, removeEnvProfile, restartEnvProxy,
   type StatusCallback,
 } from './chrome-manager';
 import { registerEnvTransferHandlers } from './ipc-env-transfer';
@@ -107,6 +107,8 @@ export function registerHandlers(): void {
   });
 
   ipcMain.handle('env:statusAll', () => getAllRuntimes());
+
+  ipcMain.handle('env:restartProxy', (_e, id: string) => restartEnvProxy(String(id)));
 
   registerEnvTransferHandlers();
 

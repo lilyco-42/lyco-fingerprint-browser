@@ -101,6 +101,8 @@ export interface EnvRuntime {
   debugPort?: number;
   proxyPort?: number;
   launchedAt?: string;
+  /** 代理异常说明（如 mihomo 意外退出、线路不可用）；为空表示未发现异常 */
+  proxyIssue?: string;
 }
 
 /** 创建环境时可手动指定的指纹字段，不填则随机 */

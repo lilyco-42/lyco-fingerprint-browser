@@ -461,17 +461,22 @@ export function render(): void {
 
   tbody.innerHTML = list.map((env, i) => {
     const running = runtimes[env.id]?.running ?? false;
+    const proxyIssue = running ? runtimes[env.id]?.proxyIssue : undefined;
     const selected = selectedIds.has(env.id);
     return `<tr class="${selected ? 'selected' : ''}" data-id="${escHtml(env.id)}">
       <td><input type="checkbox" id="chk-env-${escHtml(env.id)}" class="chk-env" data-id="${escHtml(env.id)}" ${selected ? 'checked' : ''} /><label for="chk-env-${escHtml(env.id)}"></label></td>
       <td>${i + 1}</td>
       <td title="${escHtml(env.name)}">${escHtml(env.name)}</td>
       <td title="${escHtml(getProxyLabel(env))}">${escHtml(getProxyLabel(env))}</td>
-      <td style="text-align:center"><span class="status-dot ${running ? 'running' : 'stopped'}" title="${running ? '运行中' : '已停止'}"></span></td>
+      <td style="text-align:center">${statusDotHtml(running, proxyIssue)}</td>
       <td>
         ${running
           ? `<button class="btn-close-env" data-id="${escHtml(env.id)}">关闭</button>`
           : `<button class="btn-launch-env" data-id="${escHtml(env.id)}">启动</button>`
+        }
+        ${proxyIssue && env.proxyMode === 'mihomo'
+          ? `<button class="btn-restart-proxy" data-id="${escHtml(env.id)}">重启代理</button>`
+          : ''
         }
         <button class="btn-edit-env" data-id="${escHtml(env.id)}">编辑</button>
         <button class="btn-copy-env" data-id="${escHtml(env.id)}">复制</button>
@@ -491,6 +496,9 @@ export function render(): void {
   });
   tbody.querySelectorAll<HTMLButtonElement>('.btn-close-env').forEach(btn => {
     btn.addEventListener('click', () => closeEnv(btn.dataset['id']!));
+  });
+  tbody.querySelectorAll<HTMLButtonElement>('.btn-restart-proxy').forEach(btn => {
+    btn.addEventListener('click', () => restartProxy(btn, btn.dataset['id'] ?? ''));
   });
   tbody.querySelectorAll<HTMLButtonElement>('.btn-edit-env').forEach(btn => {
     btn.addEventListener('click', () => editEnv(btn.dataset['id']!));
@@ -515,6 +523,22 @@ async function launchEnv(id: string): Promise<void> {
   } catch (e: unknown) {
     toast(`启动失败: ${(e as Error).message}`, 'error');
   }
+}
+
+function statusDotHtml(running: boolean, proxyIssue?: string): string {
+  if (proxyIssue) return `<span class="status-dot proxy-down" title="代理异常：${escHtml(proxyIssue)}"></span>`;
+  return `<span class="status-dot ${running ? 'running' : 'stopped'}" title="${running ? '运行中' : '已停止'}"></span>`;
+}
+
+async function restartProxy(btn: HTMLButtonElement, id: string): Promise<void> {
+  btn.disabled = true;
+  try {
+    runtimes[id] = await api.envRestartProxy(id);
+    toast('代理已重启，请在浏览器中点击「重试」', 'success');
+  } catch (e: unknown) {
+    toast(`重启代理失败: ${(e as Error).message}`, 'error');
+  }
+  render();
 }
 
 async function closeEnv(id: string): Promise<void> {
@@ -1043,6 +1067,10 @@ export function isEnvRunning(id: string): boolean {
 export { closeEnv };
 
 export function updateRuntime(envId: string, runtime: EnvRuntime): void {
+  const previousIssue = runtimes[envId]?.proxyIssue;
+  if (runtime.running && runtime.proxyIssue && runtime.proxyIssue !== previousIssue) {
+    toast(`「${findEnv(envId)?.name ?? '环境'}」代理异常：${runtime.proxyIssue}`, 'error');
+  }
   if (runtime.running) runtimes[envId] = runtime;
   else delete runtimes[envId];
   render();
