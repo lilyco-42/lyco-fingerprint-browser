@@ -61,6 +61,17 @@
 - 支持批量创建（最多 100 个），自动生成随机指纹配置
 - 可为每个环境单独设置主页、备注
 
+### 📦 环境导入 / 导出
+- 在「环境管理」中勾选环境后点「导出选中」，打包为 `.mirage` 文件（tar.gz）
+- 包内含环境配置、完整指纹、代理设置，以及所引用的代理源和节点，换机导入后代理可直接使用
+- 可选「包含浏览器数据」：连同 Cookie / 登录态、LocalStorage、IndexedDB、扩展、书签一起导出（自动排除缓存与锁文件）；导出前需先关闭对应环境
+- 「导入环境」会先展示预览（环境、代理匹配方式、是否含浏览器数据），确认后才写入；导入的环境一律分配新 ID，不会覆盖现有环境
+- 预览中可逐个修改环境名称，并选择「保持原配置 / 不使用代理 / 本机已有线路」；改用本机线路的环境不会新建导入代理源
+- 订阅源按 URL 复用本机已有源并按节点名称匹配，否则新建「原名 (导入)」代理源
+- 导入文件视为不可信输入：校验清单结构，拒绝路径穿越、符号链接，限制解压体积与文件数，失败时整体回滚
+- ⚠️ 导出文件含登录凭据和代理账号，请妥善保管
+- ⚠️ 浏览器数据按文件打包：Windows 上 Chrome 使用 DPAPI 加密，换机器或换系统用户后 Cookie 与已保存密码会失效；macOS 与 Linux 之间可迁移，跨操作系统一般不可用
+
 ### 🎭 浏览器指纹伪造
 通过 Chrome DevTools Protocol (CDP) 在每个环境启动时注入指纹覆盖脚本：
 
@@ -225,6 +236,17 @@ git push origin v1.0.0
 - 支援批次建立（最多 100 個），自動產生隨機指紋配置
 - 可為每個環境單獨設定首頁、備註
 
+### 📦 環境匯入 / 匯出
+- 在「環境管理」中勾選環境後點「匯出選中」，打包為 `.mirage` 檔案（tar.gz）
+- 套件內含環境配置、完整指紋、代理設定，以及所引用的代理來源和節點，換機匯入後代理可直接使用
+- 可選「包含瀏覽器資料」：連同 Cookie / 登入狀態、LocalStorage、IndexedDB、擴充功能、書籤一起匯出（自動排除快取與鎖定檔）；匯出前需先關閉對應環境
+- 「匯入環境」會先顯示預覽（環境、代理匹配方式、是否含瀏覽器資料），確認後才寫入；匯入的環境一律分配新 ID，不會覆蓋現有環境
+- 預覽中可逐一修改環境名稱，並選擇「保持原配置 / 不使用代理 / 本機已有線路」；改用本機線路的環境不會新建匯入代理來源
+- 訂閱來源依 URL 重用本機已有來源並依節點名稱匹配，否則新建「原名 (导入)」代理來源
+- 匯入檔案視為不可信輸入：校驗清單結構，拒絕路徑穿越、符號連結，限制解壓體積與檔案數，失敗時整體回滾
+- ⚠️ 匯出檔案含登入憑據和代理帳號，請妥善保管
+- ⚠️ 瀏覽器資料按檔案打包：Windows 上 Chrome 使用 DPAPI 加密，換機器或換系統使用者後 Cookie 與已儲存密碼會失效；macOS 與 Linux 之間可遷移，跨作業系統一般不可用
+
 ### 🎭 瀏覽器指紋偽造
 透過 Chrome DevTools Protocol (CDP) 在每個環境啟動時注入指紋覆寫腳本：
 
@@ -388,6 +410,17 @@ Not out of nostalgia, but as a tribute —
 - Each environment has a completely isolated Profile directory — cookies, cache, and storage never cross-contaminate
 - Batch creation (up to 100 at once) with auto-generated random fingerprint configs
 - Per-environment custom homepage and notes
+
+### 📦 Environment Import / Export
+- Select environments in *Environments* and click *Export Selected* to pack them into a `.mirage` file (tar.gz)
+- The bundle contains the environment config, full fingerprint, proxy settings, and the referenced proxy source and nodes, so proxies keep working after importing on another machine
+- Optionally include browser data: cookies / login sessions, LocalStorage, IndexedDB, extensions and bookmarks (caches and lock files are excluded automatically); the environment must be closed before exporting
+- *Import Environments* shows a preview first (environments, proxy matching, whether browser data is included) and only writes after confirmation; imported environments always get new IDs and never overwrite existing ones
+- In the preview you can rename each environment and pick *Keep original / No proxy / an existing local line*; environments switched to a local line don't create an imported proxy source
+- Subscription sources are reused by URL with nodes matched by name; otherwise a new "<name> (导入)" source is created
+- Bundles are treated as untrusted input: manifest schema validation, path traversal and symlink rejection, extraction size / file-count limits, and full rollback on failure
+- ⚠️ Exported files contain login credentials and proxy accounts — keep them safe
+- ⚠️ Browser data is copied at the file level: on Windows, Chrome encrypts it with DPAPI, so cookies and saved passwords become invalid on another machine or OS user; macOS ↔ Linux migration works, cross-OS migration generally does not
 
 ### 🎭 Browser Fingerprint Spoofing
 Fingerprint override scripts are injected via Chrome DevTools Protocol (CDP) at environment startup:

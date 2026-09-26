@@ -11,6 +11,8 @@
     "make": "electron-forge make",
     "publish": "electron-forge publish",
     "lint": "eslint --ext .ts,.tsx .",
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
     "release:patch": "npm version patch && git push && git push --tags",
     "release:minor": "npm version minor && git push && git push --tags",
     "release:major": "npm version major && git push && git push --tags"
@@ -38,18 +40,22 @@
     "@electron/fuses": "^1.8.0",
     "@types/electron-squirrel-startup": "^1.0.2",
     "@types/js-yaml": "^4.0.9",
+    "@types/tar": "^6.1.13",
     "@types/ws": "^8.18.1",
     "@typescript-eslint/eslint-plugin": "^5.62.0",
     "@typescript-eslint/parser": "^5.62.0",
+    "@vitest/coverage-v8": "^2.1.9",
     "electron": "42.2.0",
     "eslint": "^8.57.1",
     "eslint-plugin-import": "^2.32.0",
     "typescript": "~4.5.4",
-    "vite": "^5.4.21"
+    "vite": "^5.4.21",
+    "vitest": "^2.1.9"
   },
   "dependencies": {
     "electron-squirrel-startup": "^1.0.1",
     "js-yaml": "^4.1.1",
+    "tar": "^6.2.1",
     "ws": "^8.20.1",
     "xp.css": "^0.2.6"
   }

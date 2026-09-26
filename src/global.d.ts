@@ -1,5 +1,6 @@
 import type {
-  AppConfig, Environment, ProxySource, ProxyNode, Script, EnvRuntime, TrustedCert
+  AppConfig, Environment, ProxySource, ProxyNode, Script, EnvRuntime, TrustedCert,
+  ExportEnvOptions, ExportEnvResult, ImportPreview, ImportEnvResult, ImportItemOverride, TransferProgress,
 } from './types';
 
 declare global {
@@ -23,6 +24,11 @@ declare global {
       envClose(id: string): Promise<EnvRuntime>;
       envStatusAll(): Promise<Record<string, EnvRuntime>>;
       envRegenerateFP(id: string): Promise<Environment>;
+      envExport(ids: string[], opts: ExportEnvOptions): Promise<ExportEnvResult | null>;
+      envImportPreview(): Promise<ImportPreview | null>;
+      envImportApply(token: string, overrides: ImportItemOverride[]): Promise<ImportEnvResult>;
+      envImportCancel(token: string): Promise<void>;
+      onEnvTransferProgress(cb: (progress: TransferProgress) => void): void;
       // Proxy
       proxySources(): Promise<ProxySource[]>;
       proxyAddSub(url: string, name: string): Promise<ProxySource>;

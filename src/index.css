@@ -592,3 +592,62 @@ body {
 .toast.toast-success { background: #004d00; }
 .toast.fade-out { opacity: 0; }
 
+
+/* ── 环境导入/导出 ── */
+.transfer-form {
+  max-width: 560px;
+}
+.transfer-hint {
+  margin: 8px 0 0;
+  padding-left: 18px;
+  font-size: 11px;
+  color: #666;
+}
+.transfer-hint li + li {
+  margin-top: 3px;
+}
+.transfer-warn {
+  color: #b35900;
+}
+.modal-window:has(.transfer-form-wide) {
+  max-width: calc(100vw - 40px);
+}
+.transfer-form-wide {
+  width: min(760px, calc(100vw - 80px));
+  max-width: none;
+}
+.transfer-form .imp-line {
+  display: flex;
+  gap: 4px;
+}
+.transfer-form .imp-line select {
+  flex: 1;
+  min-width: 0;
+}
+.transfer-form .imp-name {
+  box-sizing: border-box;
+}
+.transfer-form .imp-origin {
+  margin-top: 2px;
+  font-size: 11px;
+  color: #666;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.transfer-form .imp-origin.transfer-warn {
+  color: #b35900;
+}
+.transfer-table-wrap {
+  max-height: 320px;
+  overflow: auto;
+  border: 1px solid #c0c0c0;
+}
+.transfer-table-wrap .xp-table {
+  table-layout: fixed;
+  width: 100%;
+}
+.transfer-table-wrap .xp-table td {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

@@ -1028,6 +1028,20 @@ export async function loadEnvs(): Promise<void> {
   render();
 }
 
+export function getSelectedIds(): string[] {
+  return envs.filter(e => selectedIds.has(e.id)).map(e => e.id);
+}
+
+export function findEnv(id: string): Environment | undefined {
+  return envs.find(e => e.id === id);
+}
+
+export function isEnvRunning(id: string): boolean {
+  return runtimes[id]?.running ?? false;
+}
+
+export { closeEnv };
+
 export function updateRuntime(envId: string, runtime: EnvRuntime): void {
   if (runtime.running) runtimes[envId] = runtime;
   else delete runtimes[envId];

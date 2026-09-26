@@ -3,6 +3,7 @@ import './index.css';
 // global.d.ts provides window.api typings (ambient, no import needed)
 
 import * as envsPage from './renderer/pages/envs';
+import * as envTransfer from './renderer/pages/env-transfer';
 import * as proxyPage from './renderer/pages/proxy';
 import * as scriptsPage from './renderer/pages/scripts';
 import * as settingsPage from './renderer/pages/settings';
@@ -49,6 +50,15 @@ window.windowControls.onMaximized((maximized) => {
 // ===== 初始化各页面 =====
 async function bootstrap(): Promise<void> {
   envsPage.init();
+  envTransfer.init({
+    getSelectedIds: envsPage.getSelectedIds,
+    findEnv: envsPage.findEnv,
+    isRunning: envsPage.isEnvRunning,
+    closeEnv: envsPage.closeEnv,
+    onImported: async () => {
+      await Promise.all([envsPage.loadEnvs(), proxyPage.reloadSources()]);
+    },
+  });
 
   // 初始化其他页面
   await proxyPage.init();

@@ -153,3 +153,60 @@ export interface CreateEnvData {
 export interface BatchCreateResult {
   created: Environment[];
 }
+
+// ── 环境导入/导出 ──────────────────────────────────
+
+export interface ExportEnvOptions {
+  /** 是否打包 Chrome 用户数据（Cookie/登录态/扩展等） */
+  includeProfile: boolean;
+}
+
+export interface ExportEnvResult {
+  filePath: string;
+  count: number;
+  bytes: number;
+}
+
+export type ProxyImportAction = 'none' | 'simple' | 'reuse' | 'create' | 'missing';
+
+export interface ImportPreviewItem {
+  name: string;
+  proxyMode: Environment['proxyMode'];
+  proxyAction: ProxyImportAction;
+  /** 例如 "机场 - HK-01" 或 "socks5://..." */
+  proxyLabel: string;
+  hasProfile: boolean;
+}
+
+export interface ImportPreview {
+  /** 主进程保存的待导入会话标识，渲染进程只能拿它确认导入 */
+  token: string;
+  fileName: string;
+  appVersion: string;
+  exportedAt: string;
+  includesProfile: boolean;
+  items: ImportPreviewItem[];
+}
+
+/** 导入时为单个环境选择的线路：沿用包内配置 / 不使用代理 / 本机已有节点 */
+export type ImportProxyChoice =
+  | { kind: 'keep' }
+  | { kind: 'none' }
+  | { kind: 'node'; nodeId: string };
+
+/** 导入确认时用户对单个环境的修改，与预览中的 items 一一对应 */
+export interface ImportItemOverride {
+  /** 新名称；留空则沿用包内名称 */
+  name: string;
+  proxy: ImportProxyChoice;
+}
+
+export interface ImportEnvResult {
+  imported: Environment[];
+  createdSources: number;
+}
+
+export interface TransferProgress {
+  stage: 'export' | 'import';
+  percent: number;
+}

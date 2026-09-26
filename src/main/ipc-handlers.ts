@@ -9,9 +9,10 @@ import {
   generateFingerprintWithOverride,
 } from './fingerprint';
 import {
-  launchEnv, closeEnv, getAllRuntimes, detectChrome, getCdpClient,
+  launchEnv, closeEnv, getAllRuntimes, detectChrome, getCdpClient, removeEnvProfile,
   type StatusCallback,
 } from './chrome-manager';
+import { registerEnvTransferHandlers } from './ipc-env-transfer';
 import { fetchSubscription, parseYamlContent } from './subscription';
 import {
   getMihomoPath, getMihomoDir,
@@ -81,9 +82,10 @@ export function registerHandlers(): void {
     return store.saveEnv({ ...env, ...data });
   });
 
-  ipcMain.handle('env:delete', (_e, id: string) => {
+  ipcMain.handle('env:delete', async (_e, id: string) => {
     closeEnv(id);
     store.deleteEnv(id);
+    await removeEnvProfile(id);
   });
 
   ipcMain.handle('env:launch', async (_e, id: string) => {
@@ -104,6 +106,8 @@ export function registerHandlers(): void {
   });
 
   ipcMain.handle('env:statusAll', () => getAllRuntimes());
+
+  registerEnvTransferHandlers();
 
   ipcMain.handle('env:regenerateFP', (_e, id: string) => {
     const env = store.getEnv(id);
@@ -184,6 +188,7 @@ export function registerHandlers(): void {
       store.saveNodes(source.id, nodes);
       source.nodeCount = nodes.length;
     } else {
+      if (!source.url) throw new Error('该代理源由导入生成，没有可刷新的原始文件');
       const content = fs.readFileSync(source.url, 'utf-8');
       const nodes = parseYamlContent(content, source.id);
       store.saveNodes(source.id, nodes);

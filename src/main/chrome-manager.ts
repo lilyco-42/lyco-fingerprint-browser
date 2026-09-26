@@ -198,6 +198,24 @@ export function closeEnv(envId: string): void {
   running.delete(envId);
 }
 
+const PROFILE_REMOVE_RETRIES = 5;
+const PROFILE_REMOVE_RETRY_DELAY_MS = 300;
+
+/** 删除环境的 Profile 目录（Chrome 数据与 mihomo 临时配置）；进程刚被结束时文件可能仍被占用，故带重试 */
+export async function removeEnvProfile(envId: string): Promise<void> {
+  const dir = path.join(app.getPath('userData'), 'profiles', envId);
+  try {
+    await fs.promises.rm(dir, {
+      recursive: true,
+      force: true,
+      maxRetries: PROFILE_REMOVE_RETRIES,
+      retryDelay: PROFILE_REMOVE_RETRY_DELAY_MS,
+    });
+  } catch (e) {
+    console.error(`[ChromeManager] Failed to remove profile dir for env ${envId}:`, e);
+  }
+}
+
 export function closeAll(): void {
   for (const id of running.keys()) {
     closeEnv(id);

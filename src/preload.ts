@@ -4,6 +4,7 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import type {
   AppConfig, Environment, ProxySource, ProxyNode, Script, EnvRuntime, TrustedCert,
+  ExportEnvOptions, ExportEnvResult, ImportPreview, ImportEnvResult, ImportItemOverride, TransferProgress,
 } from './types';
 
 contextBridge.exposeInMainWorld('windowControls', {
@@ -33,6 +34,15 @@ contextBridge.exposeInMainWorld('api', {
   envClose: (id: string): Promise<EnvRuntime> => ipcRenderer.invoke('env:close', id),
   envStatusAll: (): Promise<Record<string, EnvRuntime>> => ipcRenderer.invoke('env:statusAll'),
   envRegenerateFP: (id: string): Promise<Environment> => ipcRenderer.invoke('env:regenerateFP', id),
+  envExport: (ids: string[], opts: ExportEnvOptions): Promise<ExportEnvResult | null> =>
+    ipcRenderer.invoke('env:export', ids, opts),
+  envImportPreview: (): Promise<ImportPreview | null> => ipcRenderer.invoke('env:importPreview'),
+  envImportApply: (token: string, overrides: ImportItemOverride[]): Promise<ImportEnvResult> =>
+    ipcRenderer.invoke('env:importApply', token, overrides),
+  envImportCancel: (token: string): Promise<void> => ipcRenderer.invoke('env:importCancel', token),
+  onEnvTransferProgress: (cb: (progress: TransferProgress) => void) => {
+    ipcRenderer.on('env:transferProgress', (_e, progress: TransferProgress) => cb(progress));
+  },
 
   // Proxy
   proxySources: (): Promise<ProxySource[]> => ipcRenderer.invoke('proxy:sources'),

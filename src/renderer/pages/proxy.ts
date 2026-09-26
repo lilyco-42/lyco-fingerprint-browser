@@ -288,6 +288,14 @@ async function showAddSubDialog(): Promise<void> {
   }
 }
 
+/** 外部（如导入环境）新增了代理源后刷新列表与状态栏计数 */
+export async function reloadSources(): Promise<void> {
+  sources = await api.proxySources();
+  renderSources();
+  statusBar.updateSubsCount(sources.length);
+  statusBar.updateNodesCount(sources.reduce((acc, s) => acc + s.nodeCount, 0));
+}
+
 export async function init(): Promise<void> {
   document.getElementById('btn-add-sub')!.addEventListener('click', showAddSubDialog);
   document.getElementById('btn-import-file')!.addEventListener('click', async () => {
