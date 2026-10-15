@@ -84,6 +84,18 @@ contextBridge.exposeInMainWorld('api', {
   scriptRun: (envId: string, content: string): Promise<{ success: boolean; result: unknown }> =>
     ipcRenderer.invoke('script:run', envId, content),
 
+  // LYCO Billing: credentials never enter the main renderer after invoking the secure IPC bridge.
+  billingLogin: (username: string, password: string): Promise<import('./lyco-types').BillingAccount> =>
+    ipcRenderer.invoke('billing:login', username, password),
+  billingLogout: (): Promise<{ ok: boolean }> => ipcRenderer.invoke('billing:logout'),
+  billingAccount: (): Promise<import('./lyco-types').BillingAccount> => ipcRenderer.invoke('billing:account'),
+  billingPlan: (): Promise<import('./lyco-types').BillingPlan> => ipcRenderer.invoke('billing:plan'),
+  billingTopup: (): Promise<{ ok: boolean }> => ipcRenderer.invoke('billing:topup'),
+  billingPurchaseProxy: (): Promise<{ ok: boolean; orderNo: string | null }> =>
+    ipcRenderer.invoke('billing:purchaseProxy'),
+  billingImportProxy: (): Promise<{ ok: boolean; imported: boolean; nodeCount: number }> =>
+    ipcRenderer.invoke('billing:importProxy'),
+
   // App
   appVersion: (): Promise<string> => ipcRenderer.invoke('app:version'),
   appCheckUpdate: (): Promise<{ latestVersion: string; downloadUrl: string }> =>

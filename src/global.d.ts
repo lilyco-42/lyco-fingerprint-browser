@@ -58,6 +58,14 @@ declare global {
       certList(): Promise<TrustedCert[]>;
       certImport(): Promise<{ cert: TrustedCert; trustResult: { success: boolean; error?: string } } | null>;
       certDelete(id: string): Promise<void>;
+      // LYCO Billing
+      billingLogin(username: string, password: string): Promise<import('./lyco-types').BillingAccount>;
+      billingLogout(): Promise<{ok:boolean}>;
+      billingAccount(): Promise<import('./lyco-types').BillingAccount>;
+      billingPlan(): Promise<import('./lyco-types').BillingPlan>;
+      billingTopup(): Promise<{ok:boolean}>;
+      billingPurchaseProxy(): Promise<{ok:boolean;orderNo:string|null}>;
+      billingImportProxy(): Promise<{ok:boolean;imported:boolean;nodeCount:number}>;
       // App
       appVersion(): Promise<string>;
       appCheckUpdate(): Promise<{ latestVersion: string; downloadUrl: string }>;

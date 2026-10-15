@@ -2,7 +2,7 @@
 <html>
   <head>
     <meta charset="UTF-8" />
-    <title>幻境浏览器 — Mirage Browser</title>
+    <title>LYCO Browser — 浏览器环境 + 官方代理</title>
   </head>
   <body>
     <div class="window" id="main-window">
@@ -46,6 +46,7 @@
         <menu role="tablist" id="main-tabs">
           <button role="tab" aria-selected="true" aria-controls="panel-envs">🖥️ 环境管理</button>
           <button role="tab" aria-controls="panel-proxy">🌐 代理管理</button>
+            <button role="tab" aria-controls="panel-lyco">&#10022; LYCO 账号与支付</button>
           <button role="tab" aria-controls="panel-scripts">📜 脚本</button>
           <button role="tab" aria-controls="panel-settings">⚙️ 设置</button>
           <button role="tab" aria-controls="panel-about">ℹ️ 关于</button>
@@ -140,7 +141,47 @@
           </div>
         </article>
 
-        <!-- 设置面板 -->
+        <!-- LYCO Billing; retains upstream Mirage MIT license -->
+          <article role="tabpanel" id="panel-lyco" hidden>
+            <div class="panel-content settings-form">
+              <h2>LYCO Browser — 账号与代理</h2>
+              <p>接入 lain42.top 账户、积分与现有代理月卡。创建浏览器环境本身不扣费。</p>
+              <fieldset id="lyco-login">
+                <legend>账号登录</legend>
+                <form id="lyco-login-form">
+                  <div class="field-row"><label for="lyco-input-username">用户名</label>
+                    <input id="lyco-input-username" autocomplete="username" required></div>
+                  <div class="field-row"><label for="lyco-input-password">密码</label>
+                    <input id="lyco-input-password" type="password" autocomplete="current-password" required></div>
+                  <div class="field-row"><button type="submit">登录 LYCO</button></div>
+                </form>
+              </fieldset>
+              <fieldset id="lyco-account" hidden>
+                <legend>我的账户</legend>
+                <div class="field-row">用户名：<b id="lyco-username">—</b></div>
+                <div class="field-row">积分余额：<b id="lyco-points">—</b></div>
+                <div class="field-row">代理权益：<b id="lyco-proxy-status">—</b></div>
+                <div class="field-row">
+                  <button id="lyco-refresh" type="button">刷新积分和权益</button>
+                  <button id="lyco-logout" type="button">退出</button>
+                </div>
+              </fieldset>
+              <fieldset>
+                <legend>购买 / 充值 / 导入</legend>
+                <p id="lyco-plan-label">读取官方售价中…</p>
+                <div class="field-row">
+                  <button id="lyco-topup" type="button">前往官方充值</button>
+                  <button id="lyco-purchase" type="button" disabled>用积分购买代理月卡</button>
+                  <button id="lyco-import" type="button" disabled>导入我的代理节点</button>
+                </div>
+                <p id="lyco-message" role="status"></p>
+                <p>充值仍在 lain42.top 官方收银台完成。购买前会弹出扣费确认。</p>
+                <p>购买代理月卡后导入节点，在「代理管理」选择节点并绑定各个环境。</p>
+              </fieldset>
+            </div>
+          </article>
+
+          <!-- 设置面板 -->
         <article role="tabpanel" id="panel-settings" hidden>
           <div class="panel-content settings-form">
             <fieldset>

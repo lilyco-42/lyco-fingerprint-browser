@@ -1,8 +1,8 @@
 {
-  "name": "mirage-browser",
-  "productName": "Mirage Browser",
-  "version": "0.0.3",
-  "description": "幻境浏览器 — 多环境隔离、指纹伪造、代理集成的浏览器管理工具",
+  "name": "lyco-browser",
+  "productName": "LYCO Browser",
+  "version": "0.1.0",
+  "description": "LYCO Browser: isolated Chromium profiles, LYCO VPN proxy subscription and studio billing",
   "main": ".vite/build/main.js",
   "private": true,
   "scripts": {
@@ -48,7 +48,7 @@
     "electron": "42.2.0",
     "eslint": "^8.57.1",
     "eslint-plugin-import": "^2.32.0",
-    "typescript": "~4.5.4",
+    "typescript": "^5.9.3",
     "vite": "^5.4.21",
     "vitest": "^2.1.9"
   },

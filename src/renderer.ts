@@ -9,6 +9,7 @@ import * as scriptsPage from './renderer/pages/scripts';
 import * as settingsPage from './renderer/pages/settings';
 import * as aboutPage from './renderer/pages/about';
 import * as statusBar from './renderer/status-bar';
+import * as lycoBillingPage from './renderer/pages/lyco-billing';
 
 // ===== 标签页切换 =====
 const tabs = document.querySelectorAll<HTMLElement>('#main-tabs button[role="tab"]');
@@ -64,6 +65,7 @@ async function bootstrap(): Promise<void> {
   await proxyPage.init();
   await scriptsPage.init();
   await settingsPage.init();
+  await lycoBillingPage.init();
   aboutPage.init();
 
   // 初始化状态栏（时钟 + 版本号 + 初始计数）

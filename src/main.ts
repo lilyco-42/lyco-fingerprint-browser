@@ -5,6 +5,7 @@ import { initStore } from './main/store';
 import { registerHandlers, setStatusCallback } from './main/ipc-handlers';
 import { closeAll } from './main/chrome-manager';
 import { stopAllMihomo } from './main/mihomo-manager';
+import { registerLycoBillingHandlers } from './main/lyco-ipc';
 
 // Handle creating/removing shortcuts on Windows when installing/uninstalling.
 if (started) {
@@ -67,6 +68,7 @@ app.on('ready', async () => {
 
   initStore();
   registerHandlers();
+  registerLycoBillingHandlers();
   createWindow();
   setStatusCallback((envId, runtime) => {
     mainWindow?.webContents.send('env:statusUpdate', { envId, runtime });

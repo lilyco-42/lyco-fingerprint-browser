@@ -11,7 +11,7 @@ const config: ForgeConfig = {
   packagerConfig: {
     asar: true,
     extendInfo: './darwin-info.plist',
-    executableName: 'mirage-browser',
+    executableName: 'lyco-browser',
     icon: './assets/icons/icon',
   },
   rebuildConfig: {},
@@ -20,8 +20,8 @@ const config: ForgeConfig = {
       name: '@electron-forge/publisher-github',
       config: {
         repository: {
-          owner: 'taills',
-          name: 'Mirage-Browser',
+          owner: 'lilyco-42',
+          name: 'lyco-fingerprint-browser',
         },
         prerelease: false,
         draft: true,
