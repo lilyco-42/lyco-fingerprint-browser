@@ -17,41 +17,39 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 45
     permissions:
-      contents: read
+      contents: write
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
           cache: npm
-      - name: Install dependencies (only on GitHub Actions)
+      - name: Install dependencies (GitHub Actions only)
         run: npm ci --no-audit --no-fund
-      - name: Unit tests (mocked; no live payment requests)
+      - name: Unit tests (mocked, no real payment requests)
         run: npm test
-      - name: Compile + build Windows installers (only on GitHub Actions)
+      - name: Compile + package Windows installers (GitHub Actions only)
         run: npm run make
-      - name: Upload installer artifacts
-        uses: actions/upload-artifact@v4
+      - name: Verify release assets exist
+        shell: pwsh
+        run: |
+          $assets = @(Get-ChildItem -Path out/make -Recurse -File |
+            Where-Object { $_.Extension -in '.exe', '.zip', '.nupkg' })
+          if ($assets.Count -eq 0) { throw "No Windows installer assets found" }
+          $assets | Select-Object Name, Length, FullName | Format-Table -AutoSize
+      # Actions Artifact upload is intentionally not used: account storage quota
+      # is full. Publish assets straight to GitHub Releases from the Windows runner.
+      - name: Publish pre-release assets directly to GitHub Releases
+        if: github.event_name != 'pull_request'
+        uses: softprops/action-gh-release@v2
         with:
-          name: LYCO-Browser-Windows-x64
-          path: out/make/**/*
-          if-no-files-found: error
-          retention-days: 14
-
-  release:
-    name: Publish tagged release
-    needs: windows
-    if: startsWith(github.ref, 'refs/tags/v')
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          name: LYCO-Browser-Windows-x64
-          path: release-assets
-      - uses: softprops/action-gh-release@v2
-        with:
-          files: release-assets/**/*
-          generate_release_notes: true
+          tag_name: ${{ github.ref_type == 'tag' && github.ref_name || format('ci-{0}', github.run_number) }}
+          name: ${{ github.ref_type == 'tag' && github.ref_name || format('LYCO Browser CI {0}', github.run_number) }}
+          target_commitish: ${{ github.sha }}
           prerelease: true
+          make_latest: false
+          generate_release_notes: false
+          files: |
+            out/make/**/*.exe
+            out/make/**/*.zip
+            out/make/**/*.nupkg

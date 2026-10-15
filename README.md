@@ -19,8 +19,8 @@
 
 1. 打开本仓库的 **Actions → LYCO Browser CI & Windows Installer**，选择 **Run workflow**（或查看 `main` push 触发的执行）。
 2. 等待测试和 Windows x64 打包完成。
-3. 在该次 Actions 运行的 **Artifacts** 下载 `LYCO-Browser-Windows-x64` 安装包。
-4. 已打 `v*` 标签的构建在工作流通过后自动发布为 **Pre-release**。
+3. 在仓库 **Releases** 页面打开最新 `ci-<run>` 预发布版本，下载 Windows `.exe` 或 `.zip`。当前 Actions Artifact 额度已满，因此使用 Releases 直接分发。
+4. 推送 `main` 自动生成 `ci-<run>` 预发布版本；打 `v*` 标签的构建会以版本号发布 **Pre-release**。
 
 **此版本只做 Windows x64 的 GitHub-hosted runner 构建**；未对所有代理节点或真实资金交易做端到端测试。执行真实购买前请再次核对账号、积分、价格及网络环境。
 
