@@ -12,9 +12,16 @@ interface ClashConfig {
 const DEFAULT_SUBSCRIPTION_USER_AGENT = 'clash-verge/v2.5.1';
 const MAX_REDIRECTS = 8;
 
-function fetchUrl(url: string, userAgent?: string, redirectCount = 0): Promise<string> {
+function fetchUrl(url: string, userAgent?: string, redirectCount = 0, deadline = Date.now() + 15000): Promise<string> {
   const finalUserAgent = userAgent?.trim() || DEFAULT_SUBSCRIPTION_USER_AGENT;
   return new Promise((resolve, reject) => {
+    const parsed = new URL(url);
+    if (!['https:', 'http:'].includes(parsed.protocol) || parsed.username || parsed.password) {
+      reject(new Error('订阅地址必须是 HTTP 或 HTTPS')); return;
+    }
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) {reject(new Error('Subscription fetch timeout'));return;}
+    let timer: ReturnType<typeof setTimeout> | undefined;
     const lib = url.startsWith('https') ? https : http;
     const req = lib.get(url, {
       headers: {
@@ -24,19 +31,25 @@ function fetchUrl(url: string, userAgent?: string, redirectCount = 0): Promise<s
     }, (res) => {
       const status = res.statusCode ?? 0;
       if ([301, 302, 303, 307, 308].includes(status) && res.headers.location) {
+        res.resume();clearTimeout(timer);
         if (redirectCount >= MAX_REDIRECTS) {
           reject(new Error('Subscription fetch redirect limit exceeded'));
           return;
         }
         const nextUrl = new URL(res.headers.location, url).toString();
-        fetchUrl(nextUrl, finalUserAgent, redirectCount + 1).then(resolve).catch(reject);
+        if (parsed.protocol === 'https:' && !nextUrl.startsWith('https:')) {reject(new Error('拒绝降低订阅连接安全级别'));return;}
+        fetchUrl(nextUrl, finalUserAgent, redirectCount + 1, deadline).then(resolve).catch(reject);
         return;
       }
+      if (status < 200 || status >= 300) {res.resume();clearTimeout(timer);reject(new Error('订阅下载失败（HTTP '+status+'）'));return;}
       const chunks: Buffer[] = [];
-      res.on('data', (c: Buffer) => chunks.push(c));
-      res.on('end', () => resolve(Buffer.concat(chunks).toString('utf-8')));
+      let bytes = 0;
+      res.on('data', (c: Buffer) => {bytes+=c.length;if(bytes>2_000_000)req.destroy(new Error('订阅配置过大'));else chunks.push(c);});
+      res.on('error', error => {clearTimeout(timer);reject(error);});
+      res.on('end', () => {clearTimeout(timer);resolve(Buffer.concat(chunks).toString('utf-8'));});
     });
-    req.on('error', reject);
+    timer = setTimeout(() => req.destroy(new Error('Subscription fetch timeout')), remaining);
+    req.on('error', error => {clearTimeout(timer);reject(error);});
     req.setTimeout(15000, () => {
       req.destroy();
       reject(new Error('Subscription fetch timeout'));

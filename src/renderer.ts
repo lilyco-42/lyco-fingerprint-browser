@@ -1,5 +1,6 @@
 import 'xp.css';
 import './index.css';
+import './lyco-theme.css';
 // global.d.ts provides window.api typings (ambient, no import needed)
 
 import * as envsPage from './renderer/pages/envs';

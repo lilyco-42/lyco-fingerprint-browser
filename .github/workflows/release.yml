@@ -28,7 +28,45 @@ jobs:
         run: npm ci --no-audit --no-fund
       - name: Unit tests (mocked, no real payment requests)
         run: npm test
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Build original Lyco icon for the EXE and installer
+        run: |
+          python -m pip install Pillow==11.3.0
+          python scripts/build-icons.py
+      - name: Bundle verified official Mihomo and corresponding source
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference='Stop'
+          $version='v1.19.32'
+          $filename="mihomo-windows-amd64-compatible-$version.zip"
+          $metadata=gh api "repos/MetaCubeX/mihomo/releases/tags/$version" | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0) {exit 1}
+          $asset=$metadata.assets | Where-Object {$_.name -eq $filename}
+          if (-not $asset -or $asset.digest -notmatch '^sha256:[a-f0-9]{64}$') {throw 'Official core digest unavailable'}
+          $cache=Join-Path $env:RUNNER_TEMP 'lyco-core'
+          New-Item -ItemType Directory -Force $cache,resources/mihomo | Out-Null
+          gh release download $version --repo MetaCubeX/mihomo --pattern $filename --dir $cache
+          if ($LASTEXITCODE -ne 0) {exit 1}
+          $archive=Join-Path $cache $filename
+          if ((Get-FileHash $archive -Algorithm SHA256).Hash.ToLower() -ne $asset.digest.Substring(7)) {throw 'Official core checksum mismatch'}
+          Expand-Archive -LiteralPath $archive -DestinationPath (Join-Path $cache 'unpacked')
+          $binary=Get-ChildItem (Join-Path $cache 'unpacked') -Recurse -Filter '*.exe' | Select-Object -First 1
+          if (-not $binary) {throw 'Official core missing'}
+          Copy-Item -LiteralPath $binary.FullName -Destination resources/mihomo/mihomo.exe
+          $sourceSha=gh api "repos/MetaCubeX/mihomo/commits/$version" --jq .sha
+          if ($LASTEXITCODE -ne 0 -or $sourceSha -notmatch '^[a-f0-9]{40}$') {throw 'Corresponding source unavailable'}
+          gh api "repos/MetaCubeX/mihomo/tarball/$sourceSha" > resources/mihomo/source.tar.gz
+          if ($LASTEXITCODE -ne 0) {exit 1}
+          $license=gh api "repos/MetaCubeX/mihomo/contents/LICENSE?ref=$sourceSha" --jq .content
+          if ($LASTEXITCODE -ne 0) {exit 1}
+          [IO.File]::WriteAllBytes((Join-Path $PWD 'resources/mihomo/LICENSE'),[Convert]::FromBase64String(($license -join '')))
+          "Mihomo $version`nSource: https://github.com/MetaCubeX/mihomo/tree/$sourceSha`nArchive SHA256: $($asset.digest)" | Set-Content resources/mihomo/SOURCE.txt
       - name: Compile + package Windows installers (GitHub Actions only)
+        # All resources below are prepared by the preceding Actions steps.
         run: npm run make
       - name: Verify release assets exist
         shell: pwsh
@@ -37,6 +75,35 @@ jobs:
             Where-Object { $_.Extension -in '.exe', '.zip', '.nupkg' })
           if ($assets.Count -eq 0) { throw "No Windows installer assets found" }
           $assets | Select-Object Name, Length, FullName | Format-Table -AutoSize
+      - name: Actual packaged window and owned subscription UI
+        timeout-minutes: 4
+        shell: pwsh
+        run: |
+          npm install --no-save --package-lock=false --ignore-scripts playwright@1.55.0
+          if ($LASTEXITCODE -ne 0) {exit 1}
+          $app=Get-ChildItem out -Directory | Where-Object {$_.Name -like '*-win32-x64'} | Select-Object -First 1
+          if (-not $app) {throw 'Packaged Windows application missing'}
+          foreach ($file in @('mihomo.exe','LICENSE','source.tar.gz')) {
+            if (-not (Test-Path (Join-Path $app.FullName "resources/mihomo/$file"))) {throw "Packaged core resource missing: $file"}
+          }
+          & (Join-Path $app.FullName 'resources/mihomo/mihomo.exe') -v
+          if ($LASTEXITCODE -ne 0) {exit 1}
+          node scripts/native-smoke.mjs (Join-Path $app.FullName 'lyco-browser.exe')
+          if ($LASTEXITCODE -ne 0) {exit 1}
+      - name: Retain native acceptance in an unpublished draft
+        if: always() && github.actor == github.repository_owner
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if (Test-Path native-evidence) {
+            Compress-Archive -Path native-evidence -DestinationPath "$env:RUNNER_TEMP/native-evidence.zip"
+            $tag="evidence-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT"
+            gh release create $tag --repo $env:GITHUB_REPOSITORY --target $env:GITHUB_SHA --draft --title "Native evidence $env:GITHUB_RUN_ID"
+            if ($LASTEXITCODE -ne 0) {exit 1}
+            gh release upload $tag "$env:RUNNER_TEMP/native-evidence.zip" --repo $env:GITHUB_REPOSITORY
+            if ($LASTEXITCODE -ne 0) {exit 1}
+          }
       # Actions Artifact upload is intentionally not used: account storage quota
       # is full. Publish assets straight to GitHub Releases from the Windows runner.
       - name: Publish pre-release assets directly to GitHub Releases

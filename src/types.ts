@@ -48,6 +48,7 @@ export interface Environment {
 }
 
 export interface ProxySource {
+  lycoOwner?: string;
   id: string;
   name: string;
   type: 'subscription' | 'file';

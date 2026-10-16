@@ -34,6 +34,8 @@ build/Release
 
 # Dependency directories
 node_modules/
+resources/mihomo/
+native-evidence/
 jspm_packages/
 
 # TypeScript v1 declaration files

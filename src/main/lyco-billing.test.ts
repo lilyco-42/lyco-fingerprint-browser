@@ -3,8 +3,12 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 const mockSubscription = vi.hoisted(() => vi.fn());
+const closeEnv = vi.hoisted(() => vi.fn());
+vi.mock('./chrome-manager', () => ({closeEnv}));
 const proxyStore = vi.hoisted(() => ({
-  sources: [] as Array<{ id: string; name: string; type: 'subscription'; url: string; nodeCount: number; lastUpdated: string; createdAt: string }>,
+  sources: [] as Array<{ id: string; name: string; type: 'subscription'; url: string; nodeCount: number; lastUpdated: string; createdAt: string; lycoOwner?: string }>,
+  envs: [] as import('../types').Environment[],
+  nodes: new Map<string, import('../types').ProxyNode[]>(),
   saveNodes: vi.fn(),
 }));
 vi.mock('electron', () => ({
@@ -19,8 +23,11 @@ vi.mock('electron', () => ({
 vi.mock('./store', () => ({
   getConfig: () => ({ subscriptionUserAgent: 'lyco-browser-test' }),
   listSources: () => proxyStore.sources,
-  saveSource: (source: typeof proxyStore.sources[number]) => proxyStore.sources.push(source),
-  saveNodes: proxyStore.saveNodes,
+  saveSource: (source: typeof proxyStore.sources[number]) => {const index=proxyStore.sources.findIndex(s=>s.id===source.id);if(index<0)proxyStore.sources.push(source);else proxyStore.sources[index]=source;},
+  saveNodes: (id: string, nodes: import('../types').ProxyNode[]) => {proxyStore.saveNodes(id,nodes);proxyStore.nodes.set(id,nodes);},
+  listNodes: (id: string) => proxyStore.nodes.get(id) || [],
+  listEnvs: () => proxyStore.envs,
+  saveEnv: (env: import('../types').Environment) => {proxyStore.envs.push(env);return env;},
   newId: () => 'mock-source-01',
 }));
 vi.mock('./subscription', () => ({ fetchSubscription: mockSubscription }));
@@ -49,6 +56,7 @@ const product = { products: [{ code: 'proxy_1m', name: 'LYCO 代理月卡', poin
 beforeEach(() => {
   billing.logout();
   proxyStore.sources.length = 0;
+  proxyStore.envs.length = 0;proxyStore.nodes.clear();closeEnv.mockReset();
   proxyStore.saveNodes.mockReset();
   mockSubscription.mockReset();
   const base = process.env.RUNNER_TEMP || process.cwd();
@@ -134,10 +142,35 @@ describe('LYCO Billing adapter (no real network, no real charge)', () => {
     const result = await billing.importProxy();
     expect(result).toMatchObject({ ok: true, imported: true, nodeCount: 1 });
     expect(mockSubscription).toHaveBeenCalledWith(
-      'https://lain42.top/panel/api/sub/ABCdef1234567890/json',
+      'https://lain42.top/studio/api/sub/ABCdef1234567890/clash',
       'mock-source-01', 'lyco-browser-test',
     );
     expect(proxyStore.sources).toHaveLength(1);
     expect(proxyStore.saveNodes).toHaveBeenCalledOnce();
+  });
+
+  it('creates an owned environment without launching and blocks another account or expired access', async () => {
+    let current = me(true);
+    mockFetch(url => url.endsWith('/login') ? json({ok:true,token:'CI_TOKEN',username:'qa-customer'}) : json(current));
+    mockSubscription.mockResolvedValue([{id:'ci-node',name:'Node',sourceId:'mock-source-01',type:'http',server:'127.0.0.1',port:8000,rawYaml:'[]'}]);
+    await billing.login('qa-customer','CI-password');
+    const created=await billing.createOwnedEnvironment();
+    expect(created.nodeCount).toBe(1);expect(proxyStore.envs[0].proxyMode).toBe('mihomo');
+    expect(proxyStore.envs[0].proxyNodeId).toBe('ci-node');expect(closeEnv).not.toHaveBeenCalled();
+    current={...me(true),username:'someone-else'};
+    await expect(billing.authorizeSource('mock-source-01')).rejects.toThrow('其他账号');
+    current=me(false);
+    await expect(billing.authorizeSource('mock-source-01')).rejects.toThrow('失效');
+    expect(closeEnv).toHaveBeenCalledWith(created.id);
+  });
+
+  it('refreshes the existing owned source while preserving selected node identifiers', async () => {
+    mockFetch(url => url.endsWith('/login') ? json({ok:true,token:'CI_TOKEN',username:'qa-customer'}) : json(me(true)));
+    mockSubscription.mockResolvedValue([{id:'old-node',name:'Same node',sourceId:'mock-source-01'}]);
+    await billing.login('qa-customer','CI-password');await billing.importProxy();
+    mockSubscription.mockResolvedValue([{id:'new-node',name:'Same node',sourceId:'mock-source-01'}]);
+    const refreshed=await billing.importProxy();
+    expect(refreshed.imported).toBe(false);expect(proxyStore.sources).toHaveLength(1);
+    expect(proxyStore.nodes.get(refreshed.sourceId)?.[0].id).toBe('old-node');
   });
 });

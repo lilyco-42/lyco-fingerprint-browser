@@ -1,0 +1,27 @@
+/* Lyco software palette: quiet charcoal surfaces with a restrained red accent. */
+:root{color-scheme:dark;--lyco-bg:#101014;--lyco-card:#19191f;--lyco-line:#34343e;--lyco-text:#f3f3f5;--lyco-muted:#b1b1bd;--lyco-accent:#be3047}
+html,body{background:var(--lyco-bg);color:var(--lyco-text);font:14px/1.55 "Segoe UI","Microsoft YaHei",sans-serif}
+#main-window{background:var(--lyco-bg);border:0;border-radius:0;box-shadow:none}
+#title-bar{height:48px;padding:0 18px;background:var(--lyco-bg);border-bottom:1px solid var(--lyco-line);display:flex;align-items:center;justify-content:space-between}
+#title-bar .title-bar-text{font-size:14px;letter-spacing:.02em;text-shadow:none}
+.title-bar-controls{display:flex;gap:6px}.title-bar-controls button{min-width:30px!important;min-height:28px!important;padding:0!important;background:var(--lyco-card)!important;box-shadow:none!important;border:1px solid var(--lyco-line)!important;border-radius:6px}
+#btn-minimize:before{content:'−'}#btn-maximize:before{content:'□'}#btn-close:before{content:'×'}
+#main-tabs{margin:0;padding:14px 18px;gap:8px;background:var(--lyco-bg);border:0;display:flex;flex-wrap:wrap}
+#main-tabs button{position:static;top:0;border-radius:8px!important;background:var(--lyco-card);color:var(--lyco-muted);box-shadow:none;border:1px solid transparent;padding:9px 14px;min-height:38px}
+#main-tabs button[aria-selected=true]{background:#33212b;color:var(--lyco-text);border-color:#784052}
+#main-tabs-section>article[role=tabpanel]{padding:12px 22px 22px;background:var(--lyco-bg);border:0;box-shadow:none}
+button,input,select,textarea{font:inherit!important}
+button{background:var(--lyco-card);color:var(--lyco-text);border:1px solid var(--lyco-line);border-radius:8px;box-shadow:none;min-height:36px;padding:7px 12px;text-shadow:none;cursor:pointer}
+button:not(:disabled):hover{background:#292932;border-color:#686878}button:disabled{opacity:.42;cursor:not-allowed;text-shadow:none}
+button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible{outline:2px solid #e0667b;outline-offset:3px}
+input:not([type=checkbox]):not([type=radio]),select,textarea{background:#121217;color:var(--lyco-text);border:1px solid var(--lyco-line);border-radius:7px;box-shadow:none;padding:8px 10px;min-height:36px}
+fieldset{background:var(--lyco-card);border:1px solid var(--lyco-line);border-radius:12px;padding:20px;margin:0 0 18px;box-shadow:none}
+legend{color:var(--lyco-muted);font-weight:600;padding:0 8px}label{color:var(--lyco-muted)}a{color:#f29aac}
+.panel-toolbar{gap:8px;padding-bottom:14px}.xp-table{font-size:13px}.xp-table th,.xp-table td{border-color:var(--lyco-line);padding:12px 10px}
+.xp-table thead tr{background:#22222a}.xp-table tbody tr:hover,.xp-table tbody tr.selected{background:#34232e;color:var(--lyco-text)}
+#panel-lyco .settings-form{width:100%;max-width:920px;margin:0 auto;padding:16px 0}
+#panel-lyco h2{font-size:28px;letter-spacing:-.03em;margin:0 0 10px}#panel-lyco p{color:var(--lyco-muted);max-width:76ch}
+#panel-lyco .field-row{flex-wrap:wrap;gap:12px;margin:12px 0}#panel-lyco input{flex:1;min-width:180px}
+#lyco-create-env,#lyco-login-form button[type=submit]{background:var(--lyco-accent);border-color:var(--lyco-accent);color:#fff}
+#lyco-message{min-height:24px;color:#f6a2b2!important}#lyco-account b{color:var(--lyco-text)}
+@media(prefers-reduced-motion:reduce){*{scroll-behavior:auto!important;transition:none!important}}

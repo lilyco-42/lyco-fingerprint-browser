@@ -89,6 +89,7 @@ contextBridge.exposeInMainWorld('api', {
     ipcRenderer.invoke('billing:login', username, password),
   billingLogout: (): Promise<{ ok: boolean }> => ipcRenderer.invoke('billing:logout'),
   billingAccount: (): Promise<import('./lyco-types').BillingAccount> => ipcRenderer.invoke('billing:account'),
+  billingCreateEnvironment: (): Promise<{id: string; name: string; nodeCount: number}> => ipcRenderer.invoke('billing:createEnvironment'),
   billingPlan: (): Promise<import('./lyco-types').BillingPlan> => ipcRenderer.invoke('billing:plan'),
   billingTopup: (): Promise<{ ok: boolean }> => ipcRenderer.invoke('billing:topup'),
   billingPurchaseProxy: (): Promise<{ ok: boolean; orderNo: string | null }> =>
