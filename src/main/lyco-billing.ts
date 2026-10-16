@@ -1,9 +1,10 @@
 /**
  * LYCO Billing adapter for the existing lain42.top studio-billing service.
- * UI never receives the password, Bearer token or proxy subscription secret.
+ * Account JWT stays in main; transient login passwords are never persisted.
+ * Proxy source data remains available in the user's local proxy-management UI.
  * Payment creation is only available after an explicit click + confirmation.
  */
-import { app, safeStorage, shell } from 'electron';
+import { app, safeStorage, shell, clipboard } from 'electron';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -11,7 +12,7 @@ import * as store from './store';
 import { fetchSubscription } from './subscription';
 import { preserveNodeIds } from './proxy-guard/node-ids';
 import { generateFingerprint, generateUserAgent } from './fingerprint';
-import { closeEnv } from './chrome-manager';
+import { closeEnv, getAllRuntimes } from './chrome-manager';
 
 const API_BASE = 'https://lain42.top/studio/api';
 const SHOP_URL = 'https://lain42.top/shop/#topup';
@@ -238,4 +239,19 @@ export async function createOwnedEnvironment() {
     proxySimple: '', proxySourceId: source.id, proxyNodeId: node.id, notes: '本人网站订阅自动配置',
     homePage: 'https://lain42.top/account/'});
   return {id: env.id, name: env.name, nodeCount: imported.nodeCount};
+}
+
+export async function copyExtensionConnection(id: string) {
+  if (typeof id !== 'string' || !/^[A-Za-z0-9_-]{1,120}$/.test(id)) throw new Error('环境标识无效');
+  const env = store.getEnv(id);
+  if (!env || !store.listSources().find(s => s.id === env.proxySourceId)?.lycoOwner) throw new Error('请选择网站订阅的专属环境');
+  await authorizeSource(env.proxySourceId);
+  const runtime = getAllRuntimes()[id];
+  if (!runtime?.running || runtime.proxyIssue || !Number.isInteger(runtime.proxyPort) || runtime.proxyPort! < 1024 || runtime.proxyPort! > 65535)
+    throw new Error('请先启动并连接此环境的代理');
+  const me = await rawMe(), active = entitlement(me), issuedAt = Date.now();
+  if (!active) throw new Error('代理月卡已失效');
+  clipboard.writeText(JSON.stringify({kind:'lyco-loopback-proxy',version:1,scheme:'socks5',host:'127.0.0.1',port:runtime.proxyPort,
+    issuedAt,expiresAt:Math.min(issuedAt+8*60*60*1000,active.expires_at?Date.parse(active.expires_at):Infinity)}));
+  return {ok:true};
 }

@@ -3,6 +3,8 @@
 基于开源 [Mirage Browser](https://github.com/taills/Mirage-Browser) 的多环境浏览器管理客户端，结合已有的 LYCO 代理订阅与 Billing 账号体系。
 
 > **构建与自动化测试仅在 GitHub Actions 上运行。** 本地目录只用于源码编辑和 git 提交；请勿在本地执行 `npm install`、`npm test`、`npm run start`、`npm run make` 或打包。
+>
+> 当前开发分支新增功能仍需当前提交的 Actions 和安装包窗口验收；旧版本的成功构建不代表本分支已通过。
 
 ## 已接入
 
@@ -18,6 +20,7 @@
 - 同名节点刷新保留标识，已有环境不会因刷新订阅而丢失节点关联
 - Actions 安装包包含官方 Mihomo、完整原始许可证与对应版本源码；无需首次手动安装代理核心
 - 全局深色界面与 Lyco 原创角色图标，图标转换仅在 Actions 中执行，来源记录见 `assets/branding/`
+- 已启动的本人专属环境可在“更多”菜单复制浏览器插件连接码；与公开仓库 `lyco-browser` 中的 LYCO 订阅助手共用本机连接协议，连接码不包含账户密钥或节点口令
 - 登录令牌在 Electron 主进程管理；支持系统安全存储时加密持久化，否则仅保留进程内状态
 
 ## 如何获取安装包

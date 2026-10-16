@@ -4,7 +4,9 @@ import path from 'node:path';
 
 const mockSubscription = vi.hoisted(() => vi.fn());
 const closeEnv = vi.hoisted(() => vi.fn());
-vi.mock('./chrome-manager', () => ({closeEnv}));
+const clipboardWrite = vi.hoisted(() => vi.fn());
+const runtimes = vi.hoisted(() => ({} as Record<string, import('../types').EnvRuntime>));
+vi.mock('./chrome-manager', () => ({closeEnv,getAllRuntimes:()=>runtimes}));
 const proxyStore = vi.hoisted(() => ({
   sources: [] as Array<{ id: string; name: string; type: 'subscription'; url: string; nodeCount: number; lastUpdated: string; createdAt: string; lycoOwner?: string }>,
   envs: [] as import('../types').Environment[],
@@ -19,6 +21,7 @@ vi.mock('electron', () => ({
     decryptString: vi.fn(),
   },
   shell: { openExternal: vi.fn().mockResolvedValue(undefined) },
+  clipboard: {writeText:clipboardWrite},
 }));
 vi.mock('./store', () => ({
   getConfig: () => ({ subscriptionUserAgent: 'lyco-browser-test' }),
@@ -27,6 +30,7 @@ vi.mock('./store', () => ({
   saveNodes: (id: string, nodes: import('../types').ProxyNode[]) => {proxyStore.saveNodes(id,nodes);proxyStore.nodes.set(id,nodes);},
   listNodes: (id: string) => proxyStore.nodes.get(id) || [],
   listEnvs: () => proxyStore.envs,
+  getEnv: (id: string) => proxyStore.envs.find(e=>e.id===id) || null,
   saveEnv: (env: import('../types').Environment) => {proxyStore.envs.push(env);return env;},
   newId: () => 'mock-source-01',
 }));
@@ -57,6 +61,7 @@ beforeEach(() => {
   billing.logout();
   proxyStore.sources.length = 0;
   proxyStore.envs.length = 0;proxyStore.nodes.clear();closeEnv.mockReset();
+  clipboardWrite.mockReset();for(const id of Object.keys(runtimes))delete runtimes[id];
   proxyStore.saveNodes.mockReset();
   mockSubscription.mockReset();
   const base = process.env.RUNNER_TEMP || process.cwd();
@@ -157,6 +162,12 @@ describe('LYCO Billing adapter (no real network, no real charge)', () => {
     const created=await billing.createOwnedEnvironment();
     expect(created.nodeCount).toBe(1);expect(proxyStore.envs[0].proxyMode).toBe('mihomo');
     expect(proxyStore.envs[0].proxyNodeId).toBe('ci-node');expect(closeEnv).not.toHaveBeenCalled();
+    runtimes[created.id]={envId:created.id,running:true,proxyPort:18080};
+    await billing.copyExtensionConnection(created.id);
+    const code=JSON.parse(clipboardWrite.mock.calls[0][0]);
+    expect(code).toMatchObject({kind:'lyco-loopback-proxy',version:1,scheme:'socks5',host:'127.0.0.1',port:18080});
+    expect(code.expiresAt-code.issuedAt).toBeLessThanOrEqual(8*60*60*1000);
+    expect(clipboardWrite.mock.calls[0][0]).not.toMatch(/CI_TOKEN|password|ABCdef/);
     current={...me(true),username:'someone-else'};
     await expect(billing.authorizeSource('mock-source-01')).rejects.toThrow('其他账号');
     current=me(false);

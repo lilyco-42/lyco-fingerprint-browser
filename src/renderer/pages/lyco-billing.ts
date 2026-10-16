@@ -87,7 +87,7 @@ export async function init(): Promise<void> {
       const res = await window.api.billingImportProxy();
       setText('lyco-message', res.imported
         ? '已导入 ' + res.nodeCount + ' 个节点。请转到「代理管理」选择节点，再为独立环境绑定。'
-        : '代理源已经存在，共 ' + res.nodeCount + ' 个节点。');
+        : '代理源已刷新，同名节点保留环境关联，共 ' + res.nodeCount + ' 个节点。');
     }, '代理节点已就绪');
   });
   el('lyco-create-env').addEventListener('click', () => {

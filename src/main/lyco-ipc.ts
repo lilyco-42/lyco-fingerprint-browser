@@ -18,4 +18,5 @@ export function registerLycoBillingHandlers(trusted: () => WebContents | undefin
   handle('billing:purchaseProxy', () => billing.purchaseProxy());
   handle('billing:importProxy', () => billing.importProxy());
   handle('billing:createEnvironment', () => billing.createOwnedEnvironment());
+  handle('billing:copyExtension', (_event, id: string) => billing.copyExtensionConnection(id));
 }

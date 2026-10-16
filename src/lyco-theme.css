@@ -24,4 +24,5 @@ legend{color:var(--lyco-muted);font-weight:600;padding:0 8px}label{color:var(--l
 #panel-lyco .field-row{flex-wrap:wrap;gap:12px;margin:12px 0}#panel-lyco input{flex:1;min-width:180px}
 #lyco-create-env,#lyco-login-form button[type=submit]{background:var(--lyco-accent);border-color:var(--lyco-accent);color:#fff}
 #lyco-message{min-height:24px;color:#f6a2b2!important}#lyco-account b{color:var(--lyco-text)}
+.env-actions{display:inline-block;vertical-align:top;margin-left:4px}.env-actions summary{cursor:pointer;padding:7px 12px;border:1px solid var(--lyco-line);border-radius:8px}.env-actions>div{display:grid;gap:6px;margin-top:8px}.env-actions summary:focus-visible{outline:2px solid #e0667b;outline-offset:3px}
 @media(prefers-reduced-motion:reduce){*{scroll-behavior:auto!important;transition:none!important}}
