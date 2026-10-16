@@ -36,7 +36,9 @@ function fetchUrl(url: string, userAgent?: string, redirectCount = 0, deadline =
           reject(new Error('Subscription fetch redirect limit exceeded'));
           return;
         }
-        const nextUrl = new URL(res.headers.location, url).toString();
+        let nextUrl: string;
+        try {nextUrl = new URL(res.headers.location, url).toString();}
+        catch {reject(new Error('订阅重定向地址无效'));return;}
         if (parsed.protocol === 'https:' && !nextUrl.startsWith('https:')) {reject(new Error('拒绝降低订阅连接安全级别'));return;}
         fetchUrl(nextUrl, finalUserAgent, redirectCount + 1, deadline).then(resolve).catch(reject);
         return;
