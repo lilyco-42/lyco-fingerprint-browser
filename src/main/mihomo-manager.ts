@@ -35,6 +35,14 @@ export function getMihomoPath(): string {
   return path.join(getMihomoDir(), bin);
 }
 
+/** Prefer a user-installed update, otherwise use the Actions-packaged core. */
+export function getRuntimeMihomoPath(): string {
+  const installed = getMihomoPath();
+  if (fs.existsSync(installed)) return installed;
+  return path.join(process.resourcesPath || path.resolve(__dirname, '../../resources'), 'mihomo',
+    process.platform === 'win32' ? 'mihomo.exe' : 'mihomo');
+}
+
 /** 订阅备份目录 */
 export function getSubsDir(): string {
   const dir = path.join(getMihomoDir(), 'subscriptions');
@@ -63,7 +71,7 @@ export function saveSubscriptionBackup(sourceId: string, rawYaml: string): void 
 /** 获取已安装的 mihomo 版本，不存在或执行失败返回 null */
 export function getInstalledVersion(): Promise<string | null> {
   return new Promise((resolve) => {
-    const bin = getMihomoPath();
+    const bin = getRuntimeMihomoPath();
     if (!fs.existsSync(bin)) { resolve(null); return; }
     execFile(bin, ['-v'], { timeout: 5000 }, (err, stdout) => {
       if (err) { resolve(null); return; }
@@ -383,7 +391,7 @@ export async function startMihomoForEnv(
   const existing = runningInstances.get(envId);
   if (existing) return existing.socksPort;
 
-  const bin = getMihomoPath();
+  const bin = getRuntimeMihomoPath();
   if (!fs.existsSync(bin)) {
     throw new Error('未找到 mihomo 可执行文件，请在设置中下载安装 Mihomo');
   }
@@ -506,7 +514,7 @@ async function runWithTempMihomo<T>(
   fn: (controlPort: number) => Promise<T>,
   explicitProxyYamls?: string[],
 ): Promise<T> {
-  const bin = getMihomoPath();
+  const bin = getRuntimeMihomoPath();
   if (!fs.existsSync(bin)) {
     throw new Error('未安装 mihomo，无法测速');
   }

@@ -1,4 +1,5 @@
 import { toast } from '../toast';
+import { loadEnvs } from './envs';
 
 type Account = {
   username: string; pointsBalance: number; proxyActive: boolean; proxyExpiresAt: string | null;
@@ -26,6 +27,11 @@ function update(): void {
     : '读取官方售价中…');
   el<HTMLButtonElement>('lyco-purchase').disabled = busy || !authorized || !plan || Boolean(account?.proxyActive);
   el<HTMLButtonElement>('lyco-import').disabled = busy || !authorized || !account?.proxyActive;
+  el<HTMLButtonElement>('lyco-create-env').disabled = busy || !authorized || !account?.proxyActive;
+  document.querySelectorAll<HTMLButtonElement>('#panel-lyco button').forEach(button => {
+    if (busy) button.disabled = true;
+    else if (!['lyco-import','lyco-create-env','lyco-purchase'].includes(button.id)) button.disabled = false;
+  });
 }
 async function refresh(): Promise<void> {
   try { account = await window.api.billingAccount(); }
@@ -43,9 +49,6 @@ async function action(cb: () => Promise<unknown>, ok: string): Promise<void> {
 }
 export async function init(): Promise<void> {
   update();
-  try { plan = await window.api.billingPlan(); }
-  catch (error) { setText('lyco-message', '暂无法读取在线价格：' + String(error)); }
-  await refresh();
 
   el<HTMLFormElement>('lyco-login-form').addEventListener('submit', e => {
     e.preventDefault();
@@ -84,7 +87,20 @@ export async function init(): Promise<void> {
       const res = await window.api.billingImportProxy();
       setText('lyco-message', res.imported
         ? '已导入 ' + res.nodeCount + ' 个节点。请转到「代理管理」选择节点，再为独立环境绑定。'
-        : '代理源已经存在，共 ' + res.nodeCount + ' 个节点。');
+        : '代理源已刷新，同名节点保留环境关联，共 ' + res.nodeCount + ' 个节点。');
     }, '代理节点已就绪');
   });
+  el('lyco-create-env').addEventListener('click', () => {
+    void action(async () => {
+      const result = await window.api.billingCreateEnvironment();
+      await loadEnvs();
+      setText('lyco-message', '已创建「'+result.name+'」，订阅含 '+result.nodeCount+' 个节点。环境列表点击启动即可。');
+      document.querySelector<HTMLButtonElement>('[aria-controls="panel-envs"]')?.click();
+    }, '已创建并绑定本人订阅');
+  });
+  void Promise.allSettled([refresh(), (async () => {
+    try {plan = await window.api.billingPlan();}
+    catch (error) {setText('lyco-message', '暂无法读取在线价格：' + String(error));}
+    update();
+  })()]);
 }

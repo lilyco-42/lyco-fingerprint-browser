@@ -474,13 +474,17 @@ export function render(): void {
           ? `<button class="btn-close-env" data-id="${escHtml(env.id)}">关闭</button>`
           : `<button class="btn-launch-env" data-id="${escHtml(env.id)}">启动</button>`
         }
+        <button class="btn-edit-env" data-id="${escHtml(env.id)}">编辑</button>
+        <details class="env-actions"><summary>更多</summary><div>
+        ${running && proxySources.find(s=>s.id===env.proxySourceId)?.lycoOwner
+          ? `<button class="btn-copy-extension" data-id="${escHtml(env.id)}">复制插件连接码</button>` : ''}
         ${proxyIssue && env.proxyMode === 'mihomo'
           ? `<button class="btn-restart-proxy" data-id="${escHtml(env.id)}">重启代理</button>`
           : ''
         }
-        <button class="btn-edit-env" data-id="${escHtml(env.id)}">编辑</button>
         <button class="btn-copy-env" data-id="${escHtml(env.id)}">复制</button>
         <button class="btn-del-env btn-danger" data-id="${escHtml(env.id)}">删除</button>
+        </div></details>
       </td>
     </tr>`;
   }).join('');
@@ -496,6 +500,12 @@ export function render(): void {
   });
   tbody.querySelectorAll<HTMLButtonElement>('.btn-close-env').forEach(btn => {
     btn.addEventListener('click', () => closeEnv(btn.dataset['id']!));
+  });
+  tbody.querySelectorAll<HTMLButtonElement>('.btn-copy-extension').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      try {await api.billingCopyExtension(btn.dataset['id']!);toast('连接码已复制，请粘贴到 LYCO 订阅助手','success');}
+      catch(error) {toast(error instanceof Error?error.message:'复制失败','error');}
+    });
   });
   tbody.querySelectorAll<HTMLButtonElement>('.btn-restart-proxy').forEach(btn => {
     btn.addEventListener('click', () => restartProxy(btn, btn.dataset['id'] ?? ''));

@@ -44,9 +44,13 @@ const createWindow = () => {
     frame: false,          // 隐藏系统标题栏
     transparent: false,
     webPreferences: {
+      contextIsolation: true,
+      nodeIntegration: false,
       preload: path.join(__dirname, 'preload.js'),
     },
   });
+  mainWindow.webContents.on('will-navigate', event => event.preventDefault());
+  mainWindow.webContents.setWindowOpenHandler(() => ({action: 'deny'}));
 
   if (MAIN_WINDOW_VITE_DEV_SERVER_URL) {
     mainWindow.loadURL(MAIN_WINDOW_VITE_DEV_SERVER_URL);
@@ -68,7 +72,7 @@ app.on('ready', async () => {
 
   initStore();
   registerHandlers();
-  registerLycoBillingHandlers();
+  registerLycoBillingHandlers(() => mainWindow?.webContents);
   createWindow();
   setStatusCallback((envId, runtime) => {
     mainWindow?.webContents.send('env:statusUpdate', { envId, runtime });

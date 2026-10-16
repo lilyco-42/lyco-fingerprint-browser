@@ -13,6 +13,7 @@ import {
   type StatusCallback,
 } from './chrome-manager';
 import { registerEnvTransferHandlers } from './ipc-env-transfer';
+import { authorizeSource } from './lyco-billing';
 import { preserveNodeIds } from './proxy-guard/node-ids';
 import { fetchSubscription, parseYamlContent } from './subscription';
 import {
@@ -92,6 +93,7 @@ export function registerHandlers(): void {
   ipcMain.handle('env:launch', async (_e, id: string) => {
     const env = store.getEnv(id);
     if (!env) throw new Error('环境不存在');
+    await authorizeSource(env.proxySourceId);
     const config = store.getConfig();
     const chromePath = config.chromePath || detectChrome();
     if (!chromePath || !fs.existsSync(chromePath)) {

@@ -12,6 +12,8 @@ declare global {
       onMaximized(cb: (maximized: boolean) => void): void;
     };
     api: {
+      billingCreateEnvironment(): Promise<{id: string; name: string; nodeCount: number}>;
+      billingCopyExtension(id: string): Promise<{ok: boolean}>;
       // Settings
       settingsGet(): Promise<AppConfig>;
       settingsSave(config: AppConfig): Promise<void>;

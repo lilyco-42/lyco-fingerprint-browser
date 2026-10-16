@@ -13,6 +13,7 @@ const config: ForgeConfig = {
     extendInfo: './darwin-info.plist',
     executableName: 'lyco-browser',
     icon: './assets/icons/icon',
+    extraResource: ['./resources/mihomo', './assets/branding/ICON-LICENSE.md'],
   },
   rebuildConfig: {},
   publishers: [

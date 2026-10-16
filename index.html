@@ -2,38 +2,15 @@
 <html>
   <head>
     <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>LYCO Browser — 浏览器环境 + 官方代理</title>
   </head>
   <body>
     <div class="window" id="main-window">
       <div class="title-bar" id="title-bar">
         <div class="title-bar-text" style="display:flex;align-items:center;gap:5px">
-          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" width="16" height="16" style="flex-shrink:0;display:block">
-            <defs>
-              <linearGradient id="tl-tb" x1="0" y1="0" x2="1" y2="0">
-                <stop offset="0%" stop-color="#0e3fa0"/>
-                <stop offset="100%" stop-color="#1a72d8"/>
-              </linearGradient>
-            </defs>
-            <!-- 双层浏览器窗口，象征多实例 -->
-            <!-- 后景窗口 -->
-            <rect x="4" y="4" width="11" height="8.5" rx="1.2" fill="#7aaee0"/>
-            <rect x="4" y="4" width="11" height="2.5" rx="1.2" fill="#4a80c0"/>
-            <rect x="4" y="5.5" width="11" height="1" fill="#4a80c0"/>
-            <!-- 前景窗口背景 -->
-            <rect x="1" y="1" width="11" height="8.5" rx="1.2" fill="#eef4ff" stroke="#1a5fc0" stroke-width="1"/>
-            <!-- 前景标题栏 -->
-            <rect x="1" y="1" width="11" height="2.5" rx="1.2" fill="url(#tl-tb)"/>
-            <rect x="1" y="2.5" width="11" height="1" fill="url(#tl-tb)"/>
-            <!-- 关闭按鈕小圆点 -->
-            <circle cx="10.5" cy="2.2" r="1" fill="#e34040"/>
-            <!-- 地址栏 -->
-            <rect x="2" y="5.5" width="9" height="1.5" rx="0.5" fill="white" stroke="#9ab8d8" stroke-width="0.5"/>
-            <!-- 内容条形 -->
-            <rect x="2" y="8" width="6.5" height="0.8" rx="0.3" fill="#b8cce8"/>
-            <rect x="2" y="9.2" width="4.5" height="0.8" rx="0.3" fill="#b8cce8"/>
-          </svg>
-          幻境浏览器
+          <img src="/assets/branding/icon-source.png" width="30" height="30" alt="Lyco 原创角色图标">
+          LYCO Browser
         </div>
         <div class="title-bar-controls">
           <button aria-label="Minimize" id="btn-minimize"></button>
@@ -173,10 +150,11 @@
                   <button id="lyco-topup" type="button">前往官方充值</button>
                   <button id="lyco-purchase" type="button" disabled>用积分购买代理月卡</button>
                   <button id="lyco-import" type="button" disabled>导入我的代理节点</button>
+                  <button id="lyco-create-env" type="button" disabled>一键创建专属环境</button>
                 </div>
                 <p id="lyco-message" role="status"></p>
                 <p>充值仍在 lain42.top 官方收银台完成。购买前会弹出扣费确认。</p>
-                <p>购买代理月卡后导入节点，在「代理管理」选择节点并绑定各个环境。</p>
+                <p>已有月卡？点击“一键创建专属环境”，自动导入本人订阅并选好节点，再到环境列表启动。不会自动扣费或打开网页。</p>
               </fieldset>
             </div>
           </article>
