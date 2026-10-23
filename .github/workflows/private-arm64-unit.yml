@@ -1,4 +1,4 @@
-name: Private ARM64 lifecycle unit gate
+name: Private Linux lifecycle unit gate
 
 on:
   pull_request:
@@ -18,10 +18,10 @@ jobs:
       github.repository == 'lilyco-42/lyco-fingerprint-browser' &&
       github.event.pull_request.head.repo.full_name == github.repository &&
       github.actor == github.repository_owner
-    runs-on: [self-hosted, Linux, ARM64, lyco-fingerprint-private]
+    runs-on: [self-hosted, Linux, lyco-fingerprint-private]
     timeout-minutes: 20
     env:
-      NODE_OPTIONS: --max-old-space-size=1024
+      NODE_OPTIONS: --max-old-space-size=256
     steps:
       - uses: actions/checkout@v4
         with:

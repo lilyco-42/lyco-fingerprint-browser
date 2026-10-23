@@ -123,6 +123,7 @@ function startMihomoLine(envId: string, line: Extract<ProxyLine, { mode: 'mihomo
 interface RunningInstance {
   process: ChildProcess;
   cdpClient: CdpClient | null;
+  connectingClient: CdpClient | null;
   runtime: EnvRuntime;
   line?: ProxyLine;
   onStatusChange?: StatusCallback;
@@ -236,10 +237,11 @@ export async function launchEnv(
     launchedAt: new Date().toISOString(),
   };
 
-  const instance: RunningInstance = { process: chromeProcess, cdpClient: null, runtime, line: proxy.line, onStatusChange };
+  const instance: RunningInstance = { process: chromeProcess, cdpClient: null, connectingClient: null, runtime, line: proxy.line, onStatusChange };
   running.set(env.id, instance);
 
   const onChromeGone = (): void => {
+    instance.connectingClient?.close();
     instance.cdpClient?.close();
     // An old process may exit after this environment has already restarted.
     // It must not stop the replacement's proxy or overwrite its running status.
@@ -260,8 +262,13 @@ export async function launchEnv(
       if (running.get(env.id) !== instance) return;
       const client = new CdpClient(debugPort, env.fingerprint, env.userAgent, proxy.line ? createFailureHooks(env, proxy.line.mode) : undefined);
       // Retain the client during connection so cancellation/failure can close it.
-      instance.cdpClient = client;
-      return client.connect();
+      // Do not expose it through getCdpClient until it is actually connected.
+      instance.connectingClient = client;
+      return client.connect().then(() => {
+        if (running.get(env.id) !== instance) { client.close(); return; }
+        instance.connectingClient = null;
+        instance.cdpClient = client;
+      });
     })
     .catch((e: Error) => {
       console.error(`[ChromeManager] CDP connection failed for ${env.name}:`, e.message);
@@ -301,6 +308,7 @@ export function closeEnv(envId: string): void {
   // Remove ownership before signalling the process; a late exit cannot affect
   // an environment relaunched under the same id.
   running.delete(envId);
+  instance.connectingClient?.close();
   instance.cdpClient?.close();
   try { instance.process.kill(); } catch { /* already dead */ }
   instance.onStatusChange?.(envId, { envId, running: false });

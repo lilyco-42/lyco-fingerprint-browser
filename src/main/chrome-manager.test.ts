@@ -79,7 +79,7 @@ describe('Chrome initialization ownership and failure cleanup', () => {
 
   it('keeps a successfully connected environment running', async () => {
     await launchEnv(environment(), 'chrome-test.exe'); devToolsReady();
-    await vi.waitFor(() => expect(h.connect).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(getCdpClient('owned-environment')).toBe(h.clients[0]));
     expect(getCdpClient('owned-environment')).toBe(h.clients[0]);
     expect(getRuntime('owned-environment')?.running).toBe(true);
     expect(h.children[0].kill).not.toHaveBeenCalled();
@@ -95,6 +95,17 @@ describe('Chrome initialization ownership and failure cleanup', () => {
     expect(status).toHaveBeenLastCalledWith('owned-environment', { envId: 'owned-environment', running: false });
   });
 
+  it('does not expose a still-connecting client through the public runtime API', async () => {
+    let finish!: () => void;
+    h.connect.mockImplementationOnce(() => new Promise<void>(resolve => { finish = resolve; }));
+    await launchEnv(environment(), 'chrome-test.exe'); devToolsReady();
+    await vi.waitFor(() => expect(h.clients).toHaveLength(1));
+    expect(getCdpClient('owned-environment')).toBeNull();
+    finish();
+    await vi.waitFor(() => expect(getCdpClient('owned-environment')).toBe(h.clients[0]));
+    expect(h.children[0].kill).not.toHaveBeenCalled();
+  });
+
   it('a late connection rejection cannot close a replacement with the same environment id', async () => {
     let rejectOld!: (error: Error) => void;
     h.connect.mockImplementationOnce(() => new Promise<void>((_resolve, reject) => { rejectOld = reject; }));
@@ -102,7 +113,7 @@ describe('Chrome initialization ownership and failure cleanup', () => {
     await vi.waitFor(() => expect(h.clients).toHaveLength(1));
     closeEnv('owned-environment');
     await launchEnv(environment(), 'chrome-test.exe'); devToolsReady();
-    await vi.waitFor(() => expect(h.connect).toHaveBeenCalledTimes(2));
+    await vi.waitFor(() => expect(getCdpClient('owned-environment')).toBe(h.clients[1]));
     rejectOld(new Error('late old connection failure'));
     await vi.waitFor(() => expect(errorLog).toHaveBeenCalledTimes(1));
     expect(h.children[1].kill).not.toHaveBeenCalled();
