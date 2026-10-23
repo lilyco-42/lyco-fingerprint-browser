@@ -241,8 +241,11 @@ export async function launchEnv(
 
   const onChromeGone = (): void => {
     instance.cdpClient?.close();
+    // An old process may exit after this environment has already restarted.
+    // It must not stop the replacement's proxy or overwrite its running status.
+    if (running.get(env.id) !== instance) return;
     stopMihomoForEnv(env.id);
-    if (running.get(env.id) === instance) running.delete(env.id);
+    running.delete(env.id);
     onStatusChange?.(env.id, { envId: env.id, running: false });
   };
   chromeProcess.once('exit', onChromeGone);
@@ -254,13 +257,15 @@ export async function launchEnv(
   // Connect CDP asynchronously
   waitForDevTools(debugPort, 8000)
     .then(() => {
+      if (running.get(env.id) !== instance) return;
       const client = new CdpClient(debugPort, env.fingerprint, env.userAgent, proxy.line ? createFailureHooks(env, proxy.line.mode) : undefined);
-      return client.connect().then(() => {
-        instance.cdpClient = client;
-      });
+      // Retain the client during connection so cancellation/failure can close it.
+      instance.cdpClient = client;
+      return client.connect();
     })
     .catch((e: Error) => {
       console.error(`[ChromeManager] CDP connection failed for ${env.name}:`, e.message);
+      if (running.get(env.id) === instance) closeEnv(env.id);
     });
 
   onStatusChange?.(env.id, runtime);
@@ -293,9 +298,12 @@ export function closeEnv(envId: string): void {
   stopMihomoForEnv(envId);
   const instance = running.get(envId);
   if (!instance) return;
+  // Remove ownership before signalling the process; a late exit cannot affect
+  // an environment relaunched under the same id.
+  running.delete(envId);
   instance.cdpClient?.close();
   try { instance.process.kill(); } catch { /* already dead */ }
-  running.delete(envId);
+  instance.onStatusChange?.(envId, { envId, running: false });
 }
 
 const PROFILE_REMOVE_RETRIES = 5;
