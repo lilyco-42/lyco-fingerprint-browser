@@ -79,13 +79,26 @@ beforeEach(() => {
 });
 afterEach(() => { client.close(); });
 
-function attached(sessionId: string, targetId: string): void {
+function attached(sessionId: string, targetId: string, waitingForDebugger = false): void {
   h.sockets[0].emit('message', JSON.stringify({ method: 'Target.attachedToTarget', params: {
-    sessionId, targetInfo: { targetId, type: 'page' },
+    sessionId, targetInfo: { targetId, type: 'page' }, waitingForDebugger,
   } }));
 }
 
 describe('CDP required page-configuration barrier (no real browser or detector)', () => {
+  it('registers a new-document script and resumes a debugger-waiting page without evaluating a nonexistent context', async () => {
+    const fatal = vi.fn();
+    client = new CdpClient(9222, fingerprint, 'LYCO-Startup-Contract-Test', undefined, fatal);
+    await client.connect(); h.refused = 'Runtime.evaluate';
+    attached('session-two', 'page-two', true);
+    await vi.waitFor(() => expect(h.commands.some(command => command.sessionId === 'session-two' && command.method === 'Runtime.runIfWaitingForDebugger')).toBe(true));
+    const commands = h.commands.filter(command => command.sessionId === 'session-two').map(command => command.method);
+    expect(commands).toContain('Page.addScriptToEvaluateOnNewDocument');
+    expect(commands).not.toContain('Runtime.evaluate');
+    expect(commands.indexOf('Runtime.runIfWaitingForDebugger')).toBeGreaterThan(commands.indexOf('Page.addScriptToEvaluateOnNewDocument'));
+    expect(fatal).not.toHaveBeenCalled();
+  });
+
   it('waits for required configuration before resuming or allowing initial navigation', async () => {
     let configured!: () => void;
     h.delayedMethod = 'Page.addScriptToEvaluateOnNewDocument';

@@ -20,7 +20,7 @@ interface Reading { requests: number; reports: number; ua?: string; language?: s
 const readings = new Map<string, Reading>();
 const evidence: {
   source: string | undefined; run: string | undefined; productAcceptance: false;
-  version: string; binarySha256: string; cases: { name: string; status: string; first?: Reading }[];
+  version: string; binarySha256: string; cases: { name: string; status: string; first?: Reading; fatalError?: string }[];
 } = { source: process.env.GITHUB_SHA, run: process.env.GITHUB_RUN_ID, productAcceptance: false,
   version: '', binarySha256: '', cases: [] };
 let origin = '';
@@ -105,7 +105,8 @@ async function withBrowser(name: string, timezone: string, check: (client: CdpCl
     expect(version['User-Agent']).toContain('Chrome/');
     evidence.version = version.Browser;
     const ua = version['User-Agent'] + ' LYCO-FirstNavigation-Contract/1.0';
-    client = new CdpClient(port, { ...fingerprint, timezone }, ua);
+    client = new CdpClient(port, { ...fingerprint, timezone }, ua, undefined,
+      error => { row.fatalError = error.message.slice(0, 240); });
     await check(client, ua, `ws://127.0.0.1:${port}${browserPath}`);
     row.status = 'passed';
   } catch (error) { row.status = 'failed'; throw error; }

@@ -149,12 +149,14 @@ export class CdpClient {
         }
       }
     } else if (msg.method === 'Target.attachedToTarget') {
-      const { sessionId, targetInfo } = msg.params as { sessionId: string; targetInfo: { type: string; targetId: string } };
+      const { sessionId, targetInfo, waitingForDebugger } = msg.params as {
+        sessionId: string; targetInfo: { type: string; targetId: string }; waitingForDebugger?: boolean;
+      };
       if (targetInfo?.type === 'page') {
         this.targetSessions.set(targetInfo.targetId, sessionId);
         this.failureWatcher?.attach(sessionId, targetInfo.targetId);
         // A rejected page configuration must not resume an unconfigured page.
-        this.applyFingerprint(sessionId).catch(error => {
+        this.applyFingerprint(sessionId, waitingForDebugger === true).catch(error => {
           if (this.targetSessions.get(targetInfo.targetId) === sessionId) this.fail(error);
         });
       } else {
@@ -193,16 +195,16 @@ export class CdpClient {
     });
   }
 
-  private applyFingerprint(sessionId: string): Promise<void> {
+  private applyFingerprint(sessionId: string, waitingForDebugger = false): Promise<void> {
     if (this.fingerprintedSessions.has(sessionId)) return Promise.resolve();
     const pending = this.initializingSessions.get(sessionId);
     if (pending) return pending;
-    const setup = this.configurePage(sessionId).finally(() => this.initializingSessions.delete(sessionId));
+    const setup = this.configurePage(sessionId, true, waitingForDebugger).finally(() => this.initializingSessions.delete(sessionId));
     this.initializingSessions.set(sessionId, setup);
     return setup;
   }
 
-  private async configurePage(sessionId: string, required = true): Promise<void> {
+  private async configurePage(sessionId: string, required = true, waitingForDebugger = false): Promise<void> {
 
     const fp = this.fingerprint;
     const send = (method: string, params: unknown) => {
@@ -260,12 +262,18 @@ export class CdpClient {
     await send('Page.addScriptToEvaluateOnNewDocument', {
       source: scriptSource,
     });
-    const evaluated = await send('Runtime.evaluate', {
-      expression: scriptSource,
-      returnByValue: true,
-      awaitPromise: false,
-    }) as { exceptionDetails?: unknown } | undefined;
-    if (required && evaluated?.exceptionDetails) throw new Error('Page configuration script failed');
+    // A new page paused before its first document has no runnable main context
+    // yet. Its new-document script is registered above; evaluating now can wait
+    // for the very startup that runIfWaitingForDebugger must release below.
+    // Existing running documents still require an acknowledged evaluation.
+    if (!waitingForDebugger) {
+      const evaluated = await send('Runtime.evaluate', {
+        expression: scriptSource,
+        returnByValue: true,
+        awaitPromise: false,
+      }) as { exceptionDetails?: unknown } | undefined;
+      if (required && evaluated?.exceptionDetails) throw new Error('Page configuration script failed');
+    }
 
     if (required && ![...this.targetSessions.values()].includes(sessionId)) throw new Error('Page detached during configuration');
     await send('Runtime.runIfWaitingForDebugger', {});
