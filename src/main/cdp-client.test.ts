@@ -70,7 +70,7 @@ vi.mock('ws', async () => {
   } };
 });
 
-import { CdpClient } from './cdp-client';
+import { CdpClient, type CdpProtocolTrace } from './cdp-client';
 
 const fingerprint: FingerprintConfig = {
   timezone: 'Etc/UTC', language: 'en-US', latitude: 0, longitude: 0,
@@ -96,6 +96,21 @@ function attached(sessionId: string, targetId: string, waitingForDebugger = fals
 }
 
 describe('CDP required page-configuration barrier (no real browser or detector)', () => {
+  it('isolates an opt-in protocol observer and never gives it parameters or credentials', async () => {
+    const traces: CdpProtocolTrace[] = [];
+    client = new CdpClient(9222, fingerprint, 'LYCO-Startup-Contract-Test', undefined, undefined, event => {
+      traces.push(event);
+      if (event.kind === 'command') throw new Error('Observer must not control transport');
+    });
+    await client.connect(); h.pauseDocument = true; attached('session-two', 'page-two', true);
+    await vi.waitFor(() => expect(h.commands.some(command => command.method === 'Fetch.continueRequest')).toBe(true));
+    h.refused = 'Page.navigate';
+    await expect(client.navigate('https://owned-fixture.invalid/private-query')).rejects.toThrow();
+    expect(traces.some(event => event.kind === 'command' && event.method === 'Fetch.continueRequest')).toBe(true);
+    expect(traces.some(event => event.kind === 'response' && event.method === 'Page.navigate' && event.errorCode === -32000)).toBe(true);
+    expect(JSON.stringify(traces)).not.toMatch(/private-query|owned_cookie|owned-fixture|Authorization|CI configuration fixture|Synthetic required-command refusal/);
+  });
+
   it('holds document requests while resuming a waiting renderer and configuring its future document', async () => {
     const fatal = vi.fn();
     client = new CdpClient(9222, fingerprint, 'LYCO-Startup-Contract-Test', undefined, fatal);

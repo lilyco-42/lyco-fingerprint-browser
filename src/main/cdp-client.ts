@@ -20,9 +20,22 @@ interface CdpTargetInfo {
 }
 
 interface PendingCmd {
+  method: string;
   resolve: (value: unknown) => void;
   reject: (error: Error) => void;
   timer: NodeJS.Timeout;
+}
+
+export interface CdpProtocolTrace {
+  kind: 'command' | 'response' | 'target-attached' | 'target-detached';
+  method?: string;
+  id?: number;
+  sessionId?: string;
+  parentSessionId?: string;
+  targetId?: string;
+  targetType?: string;
+  waitingForDebugger?: boolean;
+  errorCode?: number;
 }
 
 interface NavigationGate {
@@ -52,6 +65,7 @@ export class CdpClient {
     private userAgent: string,
     failureHooks?: WatcherHooks,
     private onFatalError?: (error: Error) => void,
+    private onProtocolTrace?: (event: CdpProtocolTrace) => void,
   ) {
     this.failureWatcher = failureHooks
       ? new ProxyFailureWatcher((method, params, sessionId) => this.send(method, params, sessionId), failureHooks)
@@ -147,6 +161,8 @@ export class CdpClient {
     if (this.closed) return;
     if (msg.id !== undefined) {
       const pending = this.pending.get(msg.id);
+      this.trace({ kind: 'response', method: pending?.method, id: msg.id,
+        sessionId: msg.sessionId, errorCode: msg.error?.code });
       if (pending) {
         clearTimeout(pending.timer);
         this.pending.delete(msg.id);
@@ -172,6 +188,8 @@ export class CdpClient {
       const { sessionId, targetInfo, waitingForDebugger } = msg.params as {
         sessionId: string; targetInfo: { type: string; targetId: string }; waitingForDebugger?: boolean;
       };
+      this.trace({ kind: 'target-attached', sessionId, parentSessionId: msg.sessionId,
+        targetId: targetInfo?.targetId, targetType: targetInfo?.type, waitingForDebugger });
       if (targetInfo?.type === 'page') {
         this.targetSessions.set(targetInfo.targetId, sessionId);
         this.failureWatcher?.attach(sessionId, targetInfo.targetId);
@@ -186,6 +204,7 @@ export class CdpClient {
       }
     } else if (msg.method === 'Target.detachedFromTarget') {
       const { sessionId } = msg.params as { sessionId: string };
+      this.trace({ kind: 'target-detached', sessionId, parentSessionId: msg.sessionId });
       this.pageSessions = this.pageSessions.filter(s => s !== sessionId);
       this.fingerprintedSessions.delete(sessionId);
       this.navigationGates.delete(sessionId);
@@ -198,6 +217,13 @@ export class CdpClient {
     }
   }
 
+  private trace(event: CdpProtocolTrace): void {
+    // Whitelisted protocol metadata only: no URLs, parameters, headers,
+    // scripts, user-agent values or error messages. Opt-in diagnostics cannot
+    // alter message handling even if an observer throws.
+    try { this.onProtocolTrace?.(event); } catch { /* observer failure is isolated */ }
+  }
+
   private send(method: string, params: unknown = {}, sessionId?: string): Promise<unknown> {
     return new Promise((resolve, reject) => {
       if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
@@ -208,9 +234,10 @@ export class CdpClient {
         this.pending.delete(id);
         reject(new Error(`CDP timeout: ${method}`));
       }, 10000);
-      this.pending.set(id, { resolve, reject, timer });
+      this.pending.set(id, { method, resolve, reject, timer });
       const msg: CdpMessage = { id, method, params };
       if (sessionId) msg.sessionId = sessionId;
+      this.trace({ kind: 'command', method, id, sessionId });
       try { this.ws.send(JSON.stringify(msg)); }
       catch (error) { clearTimeout(timer); this.pending.delete(id); reject(error); }
     });

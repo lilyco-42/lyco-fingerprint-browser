@@ -8,7 +8,7 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import type { AddressInfo } from 'node:net';
 import WebSocket from 'ws';
-import { CdpClient } from '../src/main/cdp-client';
+import { CdpClient, type CdpProtocolTrace } from '../src/main/cdp-client';
 import type { FingerprintConfig } from '../src/types';
 
 if (process.env.GITHUB_ACTIONS !== 'true' || process.platform !== 'linux') throw new Error('Disposable Linux Actions browser gate only');
@@ -20,7 +20,7 @@ interface Reading { requests: number; reports: number; ua?: string; language?: s
 const readings = new Map<string, Reading>();
 const evidence: {
   source: string | undefined; run: string | undefined; productAcceptance: false;
-  version: string; binarySha256: string; cases: { name: string; status: string; first?: Reading; fatalError?: string }[];
+  version: string; binarySha256: string; cases: { name: string; status: string; first?: Reading; fatalError?: string; protocol?: CdpProtocolTrace[] }[];
 } = { source: process.env.GITHUB_SHA, run: process.env.GITHUB_RUN_ID, productAcceptance: false,
   version: '', binarySha256: '', cases: [] };
 let origin = '';
@@ -112,8 +112,14 @@ async function withBrowser(name: string, timezone: string, check: (client: CdpCl
     evidence.version = version.Browser;
     const ua = version['User-Agent'] + ' LYCO-FirstNavigation-Contract/1.0';
     const settings = { ...fingerprint, timezone };
+    row.protocol = [];
     client = new CdpClient(port, settings, ua, undefined,
-      error => { row.fatalError = error.message.slice(0, 240); });
+      error => { row.fatalError = error.message.slice(0, 240); }, event => {
+        if (row.protocol!.length >= 256) return;
+        const idHash = (value: string | undefined) => value ? createHash('sha256').update(value).digest('hex').slice(0, 12) : undefined;
+        row.protocol!.push({ ...event, sessionId: idHash(event.sessionId),
+          parentSessionId: idHash(event.parentSessionId), targetId: idHash(event.targetId) });
+      });
     await check(client, ua, `ws://127.0.0.1:${port}${browserPath}`, settings);
     row.status = 'passed';
   } catch (error) { row.status = 'failed'; throw error; }
@@ -180,7 +186,7 @@ test('an ordinary new target retains configured values on its first request and 
 
 test('a real required-command refusal prevents initial navigation', async () => {
   await withBrowser('invalid-configuration', 'LYCO-Invalid/Fixture', async client => {
-    await expect(client.connect()).rejects.toThrow();
+    await expect(client.connect()).rejects.toThrow('Invalid timezone id');
     await expect(client.navigate(origin + '/first?case=invalid-configuration')).rejects.toThrow('No configured page');
     expect(readings.has('invalid-configuration')).toBe(false);
   });
@@ -193,7 +199,7 @@ test('a required-command refusal on a new target aborts its held first request',
     // Fault injection through the same config object, not a mocked transport.
     settings.timezone = 'LYCO-Invalid/Fixture';
     await createTarget(browserUrl, origin + '/first?case=' + name);
-    await vi.waitFor(() => expect(evidence.cases.find(row => row.name === name)?.fatalError).toBeDefined(),
+    await vi.waitFor(() => expect(evidence.cases.find(row => row.name === name)?.fatalError).toContain('Invalid timezone id'),
       { timeout: 15000, interval: 25 });
     expect(readings.has(name)).toBe(false);
     await expect(client.navigate(origin + '/first?case=' + name)).rejects.toThrow('No configured page');
