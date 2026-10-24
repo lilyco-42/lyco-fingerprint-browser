@@ -3,8 +3,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Environment } from '../types';
 
 const h = vi.hoisted(() => ({
-  spawn: vi.fn(), connect: vi.fn(), stopProxy: vi.fn(), httpGet: vi.fn(), createServer: vi.fn(),
+  spawn: vi.fn(), connect: vi.fn(), navigate: vi.fn(), stopProxy: vi.fn(), httpGet: vi.fn(), createServer: vi.fn(),
   clients: [] as { connect: () => Promise<void>; close: ReturnType<typeof vi.fn> }[],
+  fatalCallbacks: [] as (() => void)[],
   children: [] as (EventEmitter & { pid: number; kill: ReturnType<typeof vi.fn> })[],
   responses: [] as ((response: EventEmitter) => void)[],
 }));
@@ -20,8 +21,11 @@ vi.mock('./mihomo-manager', () => ({
 }));
 vi.mock('./cdp-client', () => ({ CdpClient: class {
   connect = () => h.connect();
+  navigate = (url: string) => h.navigate(url);
   close = vi.fn();
-  constructor() { h.clients.push(this); }
+  constructor(_port: number, _fp: unknown, _ua: string, _hooks: unknown, onFatal: () => void) {
+    h.clients.push(this); h.fatalCallbacks.push(onFatal);
+  }
 } }));
 
 import { closeAll, closeEnv, getCdpClient, getRuntime, launchEnv } from './chrome-manager';
@@ -43,8 +47,9 @@ function devToolsReady(): void {
 
 let errorLog: ReturnType<typeof vi.spyOn>;
 beforeEach(() => {
-  vi.clearAllMocks(); h.clients = []; h.children = []; h.responses = [];
+  vi.clearAllMocks(); h.clients = []; h.children = []; h.responses = []; h.fatalCallbacks = [];
   h.connect.mockReset().mockResolvedValue(undefined);
+  h.navigate.mockReset().mockResolvedValue(undefined);
   errorLog = vi.spyOn(console, 'error').mockImplementation(() => {});
   h.spawn.mockImplementation(() => {
     const child = Object.assign(new EventEmitter(), { pid: 100 + h.children.length, kill: vi.fn() });
@@ -65,6 +70,56 @@ beforeEach(() => {
 afterEach(() => { closeAll(); errorLog.mockRestore(); });
 
 describe('Chrome initialization ownership and failure cleanup', () => {
+  it('launches only a blank page and waits for configuration before opening the home page', async () => {
+    let configured!: () => void;
+    h.connect.mockImplementationOnce(() => new Promise<void>(resolve => { configured = resolve; }));
+    const home = 'https://owned-fixture.invalid/start';
+    await launchEnv(environment(), 'chrome-test.exe', home);
+    expect(h.spawn.mock.calls[0][1]).toContain('about:blank');
+    expect(h.spawn.mock.calls[0][1]).not.toContain(home);
+    devToolsReady();
+    await vi.waitFor(() => expect(h.clients).toHaveLength(1));
+    expect(h.navigate).not.toHaveBeenCalled();
+    configured();
+    await vi.waitFor(() => expect(h.navigate).toHaveBeenCalledWith(home));
+    await vi.waitFor(() => expect(getCdpClient('owned-environment')).toBe(h.clients[0]));
+  });
+
+  it('closes the owned environment if the configured initial navigation fails', async () => {
+    h.navigate.mockRejectedValueOnce(new Error('Initial navigation refused'));
+    const status = vi.fn();
+    await launchEnv(environment(), 'chrome-test.exe', 'https://owned-fixture.invalid/start', status);
+    devToolsReady();
+    await vi.waitFor(() => expect(getRuntime('owned-environment')).toBeNull());
+    expect(h.children[0].kill).toHaveBeenCalledTimes(1);
+    expect(h.clients[0].close).toHaveBeenCalled();
+    expect(status).toHaveBeenLastCalledWith('owned-environment', { envId: 'owned-environment', running: false });
+  });
+
+  it('cancellation during configuration cannot open the old home page', async () => {
+    let configured!: () => void;
+    h.connect.mockImplementationOnce(() => new Promise<void>(resolve => { configured = resolve; }));
+    await launchEnv(environment(), 'chrome-test.exe', 'https://owned-fixture.invalid/old'); devToolsReady();
+    await vi.waitFor(() => expect(h.clients).toHaveLength(1));
+    closeEnv('owned-environment'); configured();
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(h.navigate).not.toHaveBeenCalled();
+    expect(getCdpClient('owned-environment')).toBeNull();
+  });
+
+  it('a later configuration failure closes only its owned environment', async () => {
+    await launchEnv(environment(), 'chrome-test.exe'); devToolsReady();
+    await vi.waitFor(() => expect(getCdpClient('owned-environment')).toBe(h.clients[0]));
+    const oldFatal = h.fatalCallbacks[0];
+    oldFatal();
+    expect(getRuntime('owned-environment')).toBeNull();
+    await launchEnv(environment(), 'chrome-test.exe'); devToolsReady();
+    await vi.waitFor(() => expect(getCdpClient('owned-environment')).toBe(h.clients[1]));
+    oldFatal();
+    expect(h.children[1].kill).not.toHaveBeenCalled();
+    expect(getCdpClient('owned-environment')).toBe(h.clients[1]);
+  });
+
   it('closes the browser, client and proxy when the initialization connection rejects', async () => {
     h.connect.mockRejectedValueOnce(new Error('CDP connection failed'));
     const status = vi.fn();

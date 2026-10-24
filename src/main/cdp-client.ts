@@ -31,6 +31,11 @@ export class CdpClient {
   private pending = new Map<number, PendingCmd>();
   private pageSessions: string[] = [];
   private fingerprintedSessions = new Set<string>();
+  private initializingSessions = new Map<string, Promise<void>>();
+  private targetSessions = new Map<string, string>();
+  private closed = false;
+  private initialized = false;
+  private initializationError: Error | null = null;
   private failureWatcher: ProxyFailureWatcher | null;
 
   constructor(
@@ -38,6 +43,7 @@ export class CdpClient {
     private fingerprint: FingerprintConfig,
     private userAgent: string,
     failureHooks?: WatcherHooks,
+    private onFatalError?: (error: Error) => void,
   ) {
     this.failureWatcher = failureHooks
       ? new ProxyFailureWatcher((method, params, sessionId) => this.send(method, params, sessionId), failureHooks)
@@ -45,15 +51,21 @@ export class CdpClient {
   }
 
   async connect(): Promise<void> {
+    if (this.closed) throw new Error('Client closed');
     const url = await this.getWebSocketUrl();
+    if (this.closed) throw new Error('Client closed');
     return new Promise((resolve, reject) => {
       this.ws = new WebSocket(url);
       this.ws.on('open', async () => {
         try {
           await this.startSession();
+          if (this.initializationError) throw this.initializationError;
+          if (this.closed) throw new Error('Client closed');
+          this.initialized = true;
           resolve();
         } catch (e) {
           reject(e);
+          this.fail(e);
         }
       });
       this.ws.on('message', (data) => {
@@ -61,13 +73,11 @@ export class CdpClient {
           this.handleMessage(JSON.parse(data.toString()) as CdpMessage);
         } catch { /* ignore parse errors */ }
       });
-      this.ws.on('error', reject);
+      this.ws.on('error', (error) => { reject(error); this.fail(error); });
       this.ws.on('close', () => {
-        this.pending.forEach(p => {
-          clearTimeout(p.timer);
-          p.reject(new Error('WebSocket closed'));
-        });
-        this.pending.clear();
+        const error = this.initializationError ?? new Error('WebSocket closed');
+        reject(error);
+        this.fail(error);
       });
     });
   }
@@ -99,6 +109,7 @@ export class CdpClient {
 
     // Attach to existing pages and apply fingerprint immediately.
     await this.attachExistingPageTargets();
+    if (!this.pageSessions.length) throw new Error('No configured page session available');
   }
 
   private async attachExistingPageTargets(): Promise<void> {
@@ -106,25 +117,26 @@ export class CdpClient {
     const targets = result.targetInfos ?? [];
     for (const target of targets) {
       if (target.type !== 'page') continue;
-      try {
+      let sessionId = this.targetSessions.get(target.targetId);
+      if (!sessionId) {
         const attached = await this.send('Target.attachToTarget', {
           targetId: target.targetId,
           flatten: true,
         }) as { sessionId?: string };
-        const sessionId = attached.sessionId;
-        if (!sessionId) continue;
-        this.failureWatcher?.attach(sessionId, target.targetId);
-        await this.applyFingerprint(sessionId);
-        if (target.url && !target.url.startsWith('chrome://') && !target.url.startsWith('devtools://')) {
-          await this.send('Page.reload', { ignoreCache: true }, sessionId).catch(() => { /* best-effort */ });
-        }
-      } catch {
-        // best-effort attach for already-open pages
+        sessionId = attached.sessionId;
+      }
+      if (!sessionId) throw new Error('Page attachment did not return a session');
+      this.targetSessions.set(target.targetId, sessionId);
+      this.failureWatcher?.attach(sessionId, target.targetId);
+      await this.applyFingerprint(sessionId);
+      if (target.url && target.url !== 'about:blank' && !target.url.startsWith('chrome://') && !target.url.startsWith('devtools://')) {
+        await this.send('Page.reload', { ignoreCache: true }, sessionId);
       }
     }
   }
 
   private handleMessage(msg: CdpMessage): void {
+    if (this.closed) return;
     if (msg.id !== undefined) {
       const pending = this.pending.get(msg.id);
       if (pending) {
@@ -138,16 +150,24 @@ export class CdpClient {
       }
     } else if (msg.method === 'Target.attachedToTarget') {
       const { sessionId, targetInfo } = msg.params as { sessionId: string; targetInfo: { type: string; targetId: string } };
-      if (targetInfo?.type === 'page' && !this.pageSessions.includes(sessionId)) {
-        this.pageSessions.push(sessionId);
+      if (targetInfo?.type === 'page') {
+        this.targetSessions.set(targetInfo.targetId, sessionId);
+        this.failureWatcher?.attach(sessionId, targetInfo.targetId);
+        // A rejected page configuration must not resume an unconfigured page.
+        this.applyFingerprint(sessionId).catch(error => {
+          if (this.targetSessions.get(targetInfo.targetId) === sessionId) this.fail(error);
+        });
+      } else {
+        // Non-page targets are outside this page-configuration contract.
+        this.send('Runtime.runIfWaitingForDebugger', {}, sessionId).catch(() => { /* target may already be gone */ });
       }
-      if (targetInfo?.type === 'page') this.failureWatcher?.attach(sessionId, targetInfo.targetId);
-      // Apply fingerprint to newly attached target
-      this.applyFingerprint(sessionId).catch(() => { /* best-effort */ });
     } else if (msg.method === 'Target.detachedFromTarget') {
       const { sessionId } = msg.params as { sessionId: string };
       this.pageSessions = this.pageSessions.filter(s => s !== sessionId);
       this.fingerprintedSessions.delete(sessionId);
+      for (const [targetId, attached] of this.targetSessions) {
+        if (attached === sessionId) this.targetSessions.delete(targetId);
+      }
       this.failureWatcher?.detach(sessionId);
     } else if (msg.method) {
       this.failureWatcher?.handleEvent(msg.method, (msg.params ?? {}) as Record<string, unknown>, msg.sessionId);
@@ -167,21 +187,25 @@ export class CdpClient {
       this.pending.set(id, { resolve, reject, timer });
       const msg: CdpMessage = { id, method, params };
       if (sessionId) msg.sessionId = sessionId;
-      this.ws.send(JSON.stringify(msg));
+      try { this.ws.send(JSON.stringify(msg)); }
+      catch (error) { clearTimeout(timer); this.pending.delete(id); reject(error); }
     });
   }
 
-  private async applyFingerprint(sessionId: string | undefined): Promise<void> {
-    if (sessionId && this.fingerprintedSessions.has(sessionId)) {
-      return;
-    }
-    if (sessionId) {
-      this.fingerprintedSessions.add(sessionId);
-    }
+  private applyFingerprint(sessionId: string): Promise<void> {
+    if (this.fingerprintedSessions.has(sessionId)) return Promise.resolve();
+    const pending = this.initializingSessions.get(sessionId);
+    if (pending) return pending;
+    const setup = this.configurePage(sessionId).finally(() => this.initializingSessions.delete(sessionId));
+    this.initializingSessions.set(sessionId, setup);
+    return setup;
+  }
+
+  private async configurePage(sessionId: string): Promise<void> {
 
     const fp = this.fingerprint;
     const send = (method: string, params: unknown) =>
-      this.send(method, params, sessionId).catch(() => { /* best-effort */ });
+      this.send(method, params, sessionId);
     const scriptSource = buildFingerprintScript(fp, this.userAgent);
 
     // Map navigator.platform → userAgentData.platform
@@ -233,15 +257,35 @@ export class CdpClient {
     await send('Page.addScriptToEvaluateOnNewDocument', {
       source: scriptSource,
     });
-    await send('Runtime.evaluate', {
+    const evaluated = await send('Runtime.evaluate', {
       expression: scriptSource,
       returnByValue: true,
       awaitPromise: false,
-    });
+    }) as { exceptionDetails?: unknown } | undefined;
+    if (evaluated?.exceptionDetails) throw new Error('Page configuration script failed');
 
-    if (sessionId) {
-      await send('Runtime.runIfWaitingForDebugger', {}).catch(() => { /* best-effort */ });
-    }
+    if (![...this.targetSessions.values()].includes(sessionId)) throw new Error('Page detached during configuration');
+    await send('Runtime.runIfWaitingForDebugger', {});
+    if (this.closed) throw new Error('Client closed');
+    // Register readiness only after every required command has succeeded.
+    this.fingerprintedSessions.add(sessionId);
+    if (!this.pageSessions.includes(sessionId)) this.pageSessions.push(sessionId);
+  }
+
+  private fail(error: unknown): void {
+    if (this.closed) return;
+    const failure = error instanceof Error ? error : new Error('Page configuration failed');
+    this.initializationError = failure;
+    const notify = this.initialized;
+    this.close();
+    if (notify) this.onFatalError?.(failure);
+  }
+
+  async navigate(url: string): Promise<void> {
+    const sessionId = this.pageSessions[this.pageSessions.length - 1];
+    if (!this.initialized || this.closed || !sessionId) throw new Error('No configured page session available');
+    const result = await this.send('Page.navigate', { url }, sessionId) as { errorText?: string } | undefined;
+    if (result?.errorText) throw new Error('Initial page navigation failed');
   }
 
   async runScript(expression: string): Promise<{ result: unknown; exceptionMessage?: string }> {
@@ -270,11 +314,17 @@ export class CdpClient {
   }
 
   close(): void {
+    if (this.closed) return;
+    this.closed = true;
     this.pending.forEach(p => {
       clearTimeout(p.timer);
       p.reject(new Error('Client closed'));
     });
     this.pending.clear();
+    for (const sessionId of new Set([...this.pageSessions, ...this.targetSessions.values()])) this.failureWatcher?.detach(sessionId);
+    this.pageSessions = [];
+    this.fingerprintedSessions.clear();
+    this.targetSessions.clear();
     this.ws?.close();
     this.ws = null;
   }

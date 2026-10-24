@@ -222,9 +222,9 @@ export async function launchEnv(
     args.push(`--user-agent=${env.userAgent}`);
   }
 
-  if (homePage) {
-    args.push(homePage);
-  }
+  // External navigation must wait for the owned page's configuration. Passing
+  // the home page on the command line starts its request before CDP is ready.
+  args.push('about:blank');
 
   const chromeProcess = spawn(chromePath, args, { detached: false, stdio: 'ignore' });
 
@@ -260,11 +260,15 @@ export async function launchEnv(
   waitForDevTools(debugPort, 8000)
     .then(() => {
       if (running.get(env.id) !== instance) return;
-      const client = new CdpClient(debugPort, env.fingerprint, env.userAgent, proxy.line ? createFailureHooks(env, proxy.line.mode) : undefined);
+      const client = new CdpClient(debugPort, env.fingerprint, env.userAgent,
+        proxy.line ? createFailureHooks(env, proxy.line.mode) : undefined,
+        () => { if (running.get(env.id) === instance) closeEnv(env.id); });
       // Retain the client during connection so cancellation/failure can close it.
       // Do not expose it through getCdpClient until it is actually connected.
       instance.connectingClient = client;
-      return client.connect().then(() => {
+      return client.connect().then(async () => {
+        if (running.get(env.id) !== instance) { client.close(); return; }
+        if (homePage) await client.navigate(homePage);
         if (running.get(env.id) !== instance) { client.close(); return; }
         instance.connectingClient = null;
         instance.cdpClient = client;

@@ -6,6 +6,8 @@ on:
     paths:
       - src/main/chrome-manager.ts
       - src/main/chrome-manager.test.ts
+      - src/main/cdp-client.ts
+      - src/main/cdp-client.test.ts
       - .github/workflows/private-arm64-unit.yml
 
 permissions:
@@ -33,3 +35,5 @@ jobs:
         run: npm ci --ignore-scripts --no-audit --no-fund
       - name: Run unit regressions only (not Windows or privacy acceptance)
         run: npm test -- --maxWorkers=1 --minWorkers=1 --reporter=json --outputFile=unit-results.json
+      - name: Check TypeScript without building an installer
+        run: npx tsc --noEmit --pretty false
