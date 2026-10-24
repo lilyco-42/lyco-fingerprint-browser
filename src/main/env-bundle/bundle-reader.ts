@@ -52,7 +52,9 @@ export function readBundleManifest(filePath: string): Promise<BundleManifest> {
       });
     });
     parser.on('end', () => finish(new Error(`${INVALID_BUNDLE}（缺少 ${MANIFEST_FILE}）`)));
-    parser.on('error', (e: Error) => finish(new Error(`${INVALID_BUNDLE}：${e.message}`)));
+    // @types/tar narrows Parse.on to entry/end/close; the inherited event API
+    // retains the same persistent error-listener behavior without a type cast.
+    parser.addListener('error', (e: Error) => finish(new Error(`${INVALID_BUNDLE}：${e.message}`)));
     input.on('error', (e: Error) => finish(e));
     input.pipe(parser);
   });
@@ -90,7 +92,7 @@ export function extractProfiles(
     const extractor = tar.x({
       cwd: stagingDir,
       strict: true,
-      filter: (p: string, entry: tar.ReadEntry) => {
+      filter: (p, entry) => {
         const normalized = normalizeEntryPath(p);
         if (normalized === MANIFEST_FILE) return false;
         if (!isSafeEntry(normalized, String(entry.type), allowed)) {

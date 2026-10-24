@@ -158,8 +158,9 @@ export class CdpClient {
           if (this.targetSessions.get(targetInfo.targetId) === sessionId) this.fail(error);
         });
       } else {
-        // Non-page targets are outside this page-configuration contract.
-        this.send('Runtime.runIfWaitingForDebugger', {}, sessionId).catch(() => { /* target may already be gone */ });
+        // Preserve the existing optional setup of non-page targets. They do
+        // not establish page readiness or satisfy this required-page contract.
+        this.configurePage(sessionId, false).catch(() => { /* target may already be gone */ });
       }
     } else if (msg.method === 'Target.detachedFromTarget') {
       const { sessionId } = msg.params as { sessionId: string };
@@ -201,11 +202,13 @@ export class CdpClient {
     return setup;
   }
 
-  private async configurePage(sessionId: string): Promise<void> {
+  private async configurePage(sessionId: string, required = true): Promise<void> {
 
     const fp = this.fingerprint;
-    const send = (method: string, params: unknown) =>
-      this.send(method, params, sessionId);
+    const send = (method: string, params: unknown) => {
+      const command = this.send(method, params, sessionId);
+      return required ? command : command.catch(() => { /* legacy non-page best effort */ });
+    };
     const scriptSource = buildFingerprintScript(fp, this.userAgent);
 
     // Map navigator.platform → userAgentData.platform
@@ -262,10 +265,11 @@ export class CdpClient {
       returnByValue: true,
       awaitPromise: false,
     }) as { exceptionDetails?: unknown } | undefined;
-    if (evaluated?.exceptionDetails) throw new Error('Page configuration script failed');
+    if (required && evaluated?.exceptionDetails) throw new Error('Page configuration script failed');
 
-    if (![...this.targetSessions.values()].includes(sessionId)) throw new Error('Page detached during configuration');
+    if (required && ![...this.targetSessions.values()].includes(sessionId)) throw new Error('Page detached during configuration');
     await send('Runtime.runIfWaitingForDebugger', {});
+    if (!required) return;
     if (this.closed) throw new Error('Client closed');
     // Register readiness only after every required command has succeeded.
     this.fingerprintedSessions.add(sessionId);

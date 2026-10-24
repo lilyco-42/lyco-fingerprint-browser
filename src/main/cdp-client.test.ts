@@ -157,4 +157,18 @@ describe('CDP required page-configuration barrier (no real browser or detector)'
     await client.connect(); h.scriptException = true;
     await expect(client.navigate('https://owned-fixture.invalid/start')).rejects.toThrow('Initial page navigation failed');
   });
+
+  it('preserves optional non-page setup without promoting a worker to a configured page', async () => {
+    const fatal = vi.fn();
+    client = new CdpClient(9222, fingerprint, 'LYCO-Startup-Contract-Test', undefined, fatal);
+    await client.connect(); h.refused = 'Page.enable';
+    h.sockets[0].emit('message', JSON.stringify({ method: 'Target.attachedToTarget', params: {
+      sessionId: 'worker-session', targetInfo: { targetId: 'worker-target', type: 'worker' },
+    } }));
+    await vi.waitFor(() => expect(h.commands.some(command => command.sessionId === 'worker-session' && command.method === 'Runtime.runIfWaitingForDebugger')).toBe(true));
+    expect(h.commands.some(command => command.sessionId === 'worker-session' && command.method === 'Emulation.setUserAgentOverride')).toBe(true);
+    expect(fatal).not.toHaveBeenCalled();
+    await client.navigate('https://owned-fixture.invalid/page');
+    expect(h.commands.filter(command => command.method === 'Page.navigate').at(-1)?.sessionId).toBe('session-one');
+  });
 });
