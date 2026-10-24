@@ -1,0 +1,45 @@
+name: Private Linux real-browser startup gate
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - src/main/cdp-client.ts
+      - src/main/fingerprint.ts
+      - integration/**
+      - vitest.browser.config.ts
+      - scripts/prepare-browser-gate.sh
+      - .github/workflows/private-linux-browser.yml
+
+permissions:
+  contents: read
+
+jobs:
+  browser:
+    if: >-
+      github.repository == 'lilyco-42/lyco-fingerprint-browser' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.actor == github.repository_owner
+    runs-on: [self-hosted, Linux, lyco-fingerprint-private]
+    timeout-minutes: 20
+    env:
+      NODE_OPTIONS: --max-old-space-size=256
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install test dependencies without lifecycle scripts
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Prepare pinned browser and private shared-library directory
+        run: bash scripts/prepare-browser-gate.sh
+      - name: Check TypeScript without packaging
+        run: npx tsc --noEmit --pretty false
+      - name: Real Chromium request and first-script startup checks
+        run: npx vitest run --config vitest.browser.config.ts --reporter=json --outputFile=browser-vitest.json
+      - name: Retain only synthetic fixture observations in the job log
+        if: always()
+        run: |
+          if test -f browser-observations.json; then cat browser-observations.json; fi
