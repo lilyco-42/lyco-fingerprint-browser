@@ -16,7 +16,7 @@ const binary = process.env.LYCO_BROWSER_EXE;
 if (!binary || !path.isAbsolute(binary)) throw new Error('Pinned browser dependency is missing');
 
 interface PageReading { userAgent: string; language: string; timezone: string; platform: string; cores: number }
-interface Reading { requests: number; reports: number; ua?: string; language?: string; page?: PageReading }
+interface Reading { requests: number; reports: number; ua?: string; language?: string; fixtureCookie?: boolean; page?: PageReading }
 const readings = new Map<string, Reading>();
 const evidence: {
   source: string | undefined; run: string | undefined; productAcceptance: false;
@@ -26,14 +26,20 @@ const evidence: {
 let origin = '';
 const fixture = http.createServer((req, res) => {
   const url = new URL(req.url || '/', 'http://owned.invalid');
+  if (url.pathname === '/prime') {
+    res.writeHead(200, { 'Content-Type': 'text/html', 'Cache-Control': 'no-store',
+      'Set-Cookie': 'lyco_owned_fixture=owned; Path=/; SameSite=Lax' });
+    res.end('<!doctype html><title>Owned cookie fixture</title>'); return;
+  }
   const name = url.searchParams.get('case');
-  if (!name || !['initial', 'new-page', 'invalid-configuration'].includes(name)) { res.writeHead(404); res.end(); return; }
+  if (!name || !['initial', 'new-page', 'invalid-configuration', 'new-page-invalid-configuration'].includes(name)) { res.writeHead(404); res.end(); return; }
   const row = readings.get(name) || { requests: 0, reports: 0 }; readings.set(name, row);
   if (url.pathname === '/first') {
     row.requests++;
     if (row.requests === 1) {
       row.ua = String(req.headers['user-agent'] || '').slice(0, 512);
       row.language = String(req.headers['accept-language'] || '').slice(0, 160);
+      row.fixtureCookie = String(req.headers.cookie || '').split(';').some(part => part.trim() === 'lyco_owned_fixture=owned');
     }
     res.writeHead(200, { 'Content-Type': 'text/html', 'Cache-Control': 'no-store' });
     res.end('<!doctype html><title>Owned startup fixture</title><script>'
@@ -72,7 +78,7 @@ const fingerprint: FingerprintConfig = {
 };
 const pause = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
-async function withBrowser(name: string, timezone: string, check: (client: CdpClient, ua: string, browserUrl: string) => Promise<void>): Promise<void> {
+async function withBrowser(name: string, timezone: string, check: (client: CdpClient, ua: string, browserUrl: string, settings: FingerprintConfig) => Promise<void>): Promise<void> {
   const row = { name, status: 'running' } as typeof evidence.cases[number]; evidence.cases.push(row);
   const profile = await fs.mkdtemp(path.join(os.tmpdir(), 'lyco-real-browser-'));
   const child = spawn(binary, [
@@ -105,9 +111,10 @@ async function withBrowser(name: string, timezone: string, check: (client: CdpCl
     expect(version['User-Agent']).toContain('Chrome/');
     evidence.version = version.Browser;
     const ua = version['User-Agent'] + ' LYCO-FirstNavigation-Contract/1.0';
-    client = new CdpClient(port, { ...fingerprint, timezone }, ua, undefined,
+    const settings = { ...fingerprint, timezone };
+    client = new CdpClient(port, settings, ua, undefined,
       error => { row.fatalError = error.message.slice(0, 240); });
-    await check(client, ua, `ws://127.0.0.1:${port}${browserPath}`);
+    await check(client, ua, `ws://127.0.0.1:${port}${browserPath}`, settings);
     row.status = 'passed';
   } catch (error) { row.status = 'failed'; throw error; }
   finally {
@@ -129,6 +136,7 @@ async function firstReading(name: string, ua: string): Promise<void> {
   const row = readings.get(name)!;
   expect(row.requests).toBe(1); expect(row.reports).toBe(1);
   expect(row.ua).toBe(ua); expect(row.language).toBe(fingerprint.language);
+  if (name === 'new-page') expect(row.fixtureCookie).toBe(true);
   expect(row.page).toEqual({ userAgent: ua, language: fingerprint.language, platform: fingerprint.platform,
     cores: fingerprint.hardwareConcurrency, timezone: fingerprint.timezone });
 }
@@ -160,6 +168,11 @@ test('initial navigation uses the configured first request and synchronous first
 test('an ordinary new target retains configured values on its first request and script', async () => {
   await withBrowser('new-page', fingerprint.timezone, async (client, ua, browserUrl) => {
     await client.connect();
+    await client.navigate(origin + '/prime');
+    await vi.waitFor(async () => {
+      const value = await client.runScript('document.cookie');
+      expect(value.result).toContain('lyco_owned_fixture=owned');
+    }, { timeout: 5000, interval: 50 });
     await createTarget(browserUrl, origin + '/first?case=new-page');
     await firstReading('new-page', ua);
   });
@@ -170,5 +183,19 @@ test('a real required-command refusal prevents initial navigation', async () => 
     await expect(client.connect()).rejects.toThrow();
     await expect(client.navigate(origin + '/first?case=invalid-configuration')).rejects.toThrow('No configured page');
     expect(readings.has('invalid-configuration')).toBe(false);
+  });
+});
+
+test('a required-command refusal on a new target aborts its held first request', async () => {
+  const name = 'new-page-invalid-configuration';
+  await withBrowser(name, fingerprint.timezone, async (client, _ua, browserUrl, settings) => {
+    await client.connect();
+    // Fault injection through the same config object, not a mocked transport.
+    settings.timezone = 'LYCO-Invalid/Fixture';
+    await createTarget(browserUrl, origin + '/first?case=' + name);
+    await vi.waitFor(() => expect(evidence.cases.find(row => row.name === name)?.fatalError).toBeDefined(),
+      { timeout: 15000, interval: 25 });
+    expect(readings.has(name)).toBe(false);
+    await expect(client.navigate(origin + '/first?case=' + name)).rejects.toThrow('No configured page');
   });
 });

@@ -7,6 +7,7 @@ const h = vi.hoisted(() => ({
   commands: [] as Command[], sockets: [] as (EventEmitter & { readyState: number })[],
   autoAttach: true, targets: [{ targetId: 'page-one', type: 'page', url: 'about:blank' }],
   refused: '', scriptException: false, delayedMethod: '', delayedSession: '', delay: null as Promise<void> | null,
+  pauseDocument: false, requireResume: false, resumed: new Set<string>(),
 }));
 
 vi.mock('node:http', async () => {
@@ -47,12 +48,20 @@ vi.mock('ws', async () => {
       }
       if (command.method === h.delayedMethod && (!h.delayedSession || command.sessionId === h.delayedSession)) await h.delay;
       if (this.readyState !== FakeSocket.OPEN) return;
+      if (command.method === 'Fetch.enable' && h.pauseDocument && h.refused !== 'Fetch.enable') {
+        this.emit('message', JSON.stringify({ method: 'Fetch.requestPaused', sessionId: command.sessionId, params: {
+          requestId: 'owned-document', request: { headers: { 'User-Agent': 'unconfigured', 'Accept-Language': 'unconfigured-language',
+            Cookie: 'owned_cookie=1', Authorization: 'Bearer owned-fixture', Accept: 'text/html' } },
+        } }));
+      }
+      if (command.method === 'Runtime.runIfWaitingForDebugger' && command.sessionId) h.resumed.add(command.sessionId);
       let result: unknown = {};
       if (command.method === 'Target.getTargets') result = { targetInfos: h.targets };
       if (command.method === 'Target.attachToTarget') result = { sessionId: 'session-one' };
       if (command.method === 'Runtime.evaluate' && h.scriptException) result = { exceptionDetails: { text: 'private script detail' } };
       if (command.method === 'Page.navigate' && h.scriptException) result = { errorText: 'private navigation detail' };
-      this.emit('message', JSON.stringify(command.method === h.refused
+      const prematureRuntime = h.requireResume && command.method === 'Runtime.enable' && !h.resumed.has(command.sessionId || '');
+      this.emit('message', JSON.stringify(command.method === h.refused || prematureRuntime
         ? { id: command.id, error: { code: -32000, message: 'Synthetic required-command refusal' } }
         : { id: command.id, result }));
     });
@@ -75,6 +84,7 @@ beforeEach(() => {
   h.commands = []; h.sockets = []; h.autoAttach = true;
   h.targets = [{ targetId: 'page-one', type: 'page', url: 'about:blank' }];
   h.refused = ''; h.scriptException = false; h.delayedMethod = ''; h.delayedSession = ''; h.delay = null;
+  h.pauseDocument = false; h.requireResume = false; h.resumed = new Set();
   client = new CdpClient(9222, fingerprint, 'LYCO-Startup-Contract-Test');
 });
 afterEach(() => { client.close(); });
@@ -86,17 +96,56 @@ function attached(sessionId: string, targetId: string, waitingForDebugger = fals
 }
 
 describe('CDP required page-configuration barrier (no real browser or detector)', () => {
-  it('registers a new-document script and resumes a debugger-waiting page without evaluating a nonexistent context', async () => {
+  it('holds document requests while resuming a waiting renderer and configuring its future document', async () => {
     const fatal = vi.fn();
     client = new CdpClient(9222, fingerprint, 'LYCO-Startup-Contract-Test', undefined, fatal);
-    await client.connect(); h.refused = 'Runtime.evaluate';
+    await client.connect(); h.refused = 'Runtime.evaluate'; h.requireResume = true; h.pauseDocument = true;
     attached('session-two', 'page-two', true);
-    await vi.waitFor(() => expect(h.commands.some(command => command.sessionId === 'session-two' && command.method === 'Runtime.runIfWaitingForDebugger')).toBe(true));
+    await vi.waitFor(() => expect(h.commands.some(command => command.sessionId === 'session-two' && command.method === 'Fetch.continueRequest')).toBe(true));
     const commands = h.commands.filter(command => command.sessionId === 'session-two').map(command => command.method);
     expect(commands).toContain('Page.addScriptToEvaluateOnNewDocument');
     expect(commands).not.toContain('Runtime.evaluate');
-    expect(commands.indexOf('Runtime.runIfWaitingForDebugger')).toBeGreaterThan(commands.indexOf('Page.addScriptToEvaluateOnNewDocument'));
+    expect(commands.indexOf('Runtime.runIfWaitingForDebugger')).toBeGreaterThan(commands.indexOf('Fetch.enable'));
+    expect(commands.indexOf('Runtime.enable')).toBeGreaterThan(commands.indexOf('Runtime.runIfWaitingForDebugger'));
+    expect(commands.indexOf('Fetch.continueRequest')).toBeGreaterThan(commands.indexOf('Page.addScriptToEvaluateOnNewDocument'));
+    const request = h.commands.find(command => command.method === 'Fetch.continueRequest')!;
+    expect(request.params.headers).toEqual(expect.arrayContaining([
+      { name: 'User-Agent', value: 'LYCO-Startup-Contract-Test' }, { name: 'Accept-Language', value: 'en-US' },
+      { name: 'Cookie', value: 'owned_cookie=1' }, { name: 'Authorization', value: 'Bearer owned-fixture' },
+      { name: 'Accept', value: 'text/html' },
+    ]));
     expect(fatal).not.toHaveBeenCalled();
+  });
+
+  it('aborts the held navigation when a required configuration command fails after renderer resume', async () => {
+    const fatal = vi.fn();
+    client = new CdpClient(9222, fingerprint, 'LYCO-Startup-Contract-Test', undefined, fatal);
+    await client.connect(); h.pauseDocument = true; h.refused = 'Emulation.setTimezoneOverride';
+    attached('session-two', 'page-two', true);
+    await vi.waitFor(() => expect(fatal).toHaveBeenCalledTimes(1));
+    expect(h.commands.some(command => command.method === 'Fetch.failRequest' && command.params.requestId === 'owned-document')).toBe(true);
+    expect(h.commands.some(command => command.method === 'Page.stopLoading')).toBe(true);
+    expect(h.commands.some(command => command.method === 'Fetch.continueRequest')).toBe(false);
+  });
+
+  it('cannot resume a new renderer if its document request gate is rejected', async () => {
+    const fatal = vi.fn();
+    client = new CdpClient(9222, fingerprint, 'LYCO-Startup-Contract-Test', undefined, fatal);
+    await client.connect(); h.refused = 'Fetch.enable';
+    attached('session-two', 'page-two', true);
+    await vi.waitFor(() => expect(fatal).toHaveBeenCalledTimes(1));
+    expect(h.commands.some(command => command.sessionId === 'session-two' && command.method === 'Runtime.runIfWaitingForDebugger')).toBe(false);
+  });
+
+  it('also protects the first document when a new blank page has no request during setup', async () => {
+    await client.connect(); attached('session-two', 'page-two', true);
+    await vi.waitFor(() => expect(h.commands.some(command => command.sessionId === 'session-two' && command.method === 'Page.addScriptToEvaluateOnNewDocument')).toBe(true));
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(h.commands.some(command => command.method === 'Fetch.continueRequest')).toBe(false);
+    h.sockets[0].emit('message', JSON.stringify({ method: 'Fetch.requestPaused', sessionId: 'session-two', params: {
+      requestId: 'later-document', request: { headers: { Accept: 'text/html' } },
+    } }));
+    await vi.waitFor(() => expect(h.commands.some(command => command.method === 'Fetch.continueRequest' && command.params.requestId === 'later-document')).toBe(true));
   });
 
   it('waits for required configuration before resuming or allowing initial navigation', async () => {
@@ -148,20 +197,20 @@ describe('CDP required page-configuration barrier (no real browser or detector)'
     expect(h.sockets[0].readyState).toBe(3);
   });
 
-  it('ignores a detached pending page without treating its late setup result as readiness', async () => {
+  it.each(['Network.enable', 'Fetch.continueRequest'])('ignores a page detached during %s without promoting its late result to readiness', async method => {
     const fatal = vi.fn();
     client = new CdpClient(9222, fingerprint, 'LYCO-Startup-Contract-Test', undefined, fatal);
     await client.connect();
     let finish!: () => void;
-    h.delayedMethod = 'Network.enable'; h.delayedSession = 'session-two';
+    h.delayedMethod = method; h.delayedSession = 'session-two'; h.pauseDocument = method === 'Fetch.continueRequest';
     h.delay = new Promise<void>(resolve => { finish = resolve; });
-    attached('session-two', 'page-two');
-    await vi.waitFor(() => expect(h.commands.some(command => command.sessionId === 'session-two' && command.method === 'Network.enable')).toBe(true));
+    attached('session-two', 'page-two', h.pauseDocument);
+    await vi.waitFor(() => expect(h.commands.some(command => command.sessionId === 'session-two' && command.method === method)).toBe(true));
     h.sockets[0].emit('message', JSON.stringify({ method: 'Target.detachedFromTarget', params: { sessionId: 'session-two' } }));
     finish();
     await new Promise(resolve => setTimeout(resolve, 0));
     expect(fatal).not.toHaveBeenCalled();
-    expect(h.commands.some(command => command.sessionId === 'session-two' && command.method === 'Runtime.runIfWaitingForDebugger')).toBe(false);
+    if (!h.pauseDocument) expect(h.commands.some(command => command.sessionId === 'session-two' && command.method === 'Runtime.runIfWaitingForDebugger')).toBe(false);
     await client.navigate('https://owned-fixture.invalid/still-owned');
     expect(h.commands.filter(command => command.method === 'Page.navigate').at(-1)?.sessionId).toBe('session-one');
   });

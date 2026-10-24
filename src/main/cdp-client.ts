@@ -25,6 +25,13 @@ interface PendingCmd {
   timer: NodeJS.Timeout;
 }
 
+interface NavigationGate {
+  phase: 'configuring' | 'ready' | 'failed';
+  resumed: boolean;
+  language: string;
+  requests: Map<string, Record<string, string>>;
+}
+
 export class CdpClient {
   private ws: WebSocket | null = null;
   private cmdId = 0;
@@ -33,6 +40,7 @@ export class CdpClient {
   private fingerprintedSessions = new Set<string>();
   private initializingSessions = new Map<string, Promise<void>>();
   private targetSessions = new Map<string, string>();
+  private navigationGates = new Map<string, NavigationGate>();
   private closed = false;
   private initialized = false;
   private initializationError: Error | null = null;
@@ -148,6 +156,18 @@ export class CdpClient {
           pending.resolve(msg.result);
         }
       }
+    } else if (msg.method === 'Fetch.requestPaused' && msg.sessionId) {
+      const gate = this.navigationGates.get(msg.sessionId);
+      if (!gate) return;
+      const { requestId, request } = msg.params as { requestId: string; request: { headers: Record<string, string> } };
+      gate.requests.set(requestId, request.headers);
+      if (gate.phase === 'ready') {
+        this.continueNavigation(msg.sessionId, gate, requestId).catch(error => {
+          this.abortNavigation(msg.sessionId!).finally(() => this.fail(error));
+        });
+      } else if (gate.phase === 'failed') {
+        this.send('Fetch.failRequest', { requestId, errorReason: 'Aborted' }, msg.sessionId).catch(() => { /* target is closing */ });
+      }
     } else if (msg.method === 'Target.attachedToTarget') {
       const { sessionId, targetInfo, waitingForDebugger } = msg.params as {
         sessionId: string; targetInfo: { type: string; targetId: string }; waitingForDebugger?: boolean;
@@ -168,6 +188,7 @@ export class CdpClient {
       const { sessionId } = msg.params as { sessionId: string };
       this.pageSessions = this.pageSessions.filter(s => s !== sessionId);
       this.fingerprintedSessions.delete(sessionId);
+      this.navigationGates.delete(sessionId);
       for (const [targetId, attached] of this.targetSessions) {
         if (attached === sessionId) this.targetSessions.delete(targetId);
       }
@@ -199,12 +220,26 @@ export class CdpClient {
     if (this.fingerprintedSessions.has(sessionId)) return Promise.resolve();
     const pending = this.initializingSessions.get(sessionId);
     if (pending) return pending;
-    const setup = this.configurePage(sessionId, true, waitingForDebugger).finally(() => this.initializingSessions.delete(sessionId));
+    const setup = this.configurePage(sessionId, true, waitingForDebugger)
+      .catch(async error => { await this.abortNavigation(sessionId); throw error; })
+      .finally(() => this.initializingSessions.delete(sessionId));
     this.initializingSessions.set(sessionId, setup);
     return setup;
   }
 
   private async configurePage(sessionId: string, required = true, waitingForDebugger = false): Promise<void> {
+
+    if (required && waitingForDebugger) {
+      // Runtime.enable itself can wait for renderer startup. Hold document
+      // requests in the browser process before allowing that startup; required
+      // configuration still has to succeed before a request is continued.
+      const gate: NavigationGate = { phase: 'configuring', resumed: false,
+        language: this.fingerprint.language, requests: new Map() };
+      this.navigationGates.set(sessionId, gate);
+      await this.send('Fetch.enable', { patterns: [{ resourceType: 'Document', requestStage: 'Request' }] }, sessionId);
+      gate.resumed = true;
+      await this.send('Runtime.runIfWaitingForDebugger', {}, sessionId);
+    }
 
     const fp = this.fingerprint;
     const send = (method: string, params: unknown) => {
@@ -276,21 +311,50 @@ export class CdpClient {
     }
 
     if (required && ![...this.targetSessions.values()].includes(sessionId)) throw new Error('Page detached during configuration');
-    await send('Runtime.runIfWaitingForDebugger', {});
+    if (!waitingForDebugger) await send('Runtime.runIfWaitingForDebugger', {});
     if (!required) return;
     if (this.closed) throw new Error('Client closed');
+    const gate = this.navigationGates.get(sessionId);
+    if (gate) {
+      gate.phase = 'ready';
+      for (const requestId of [...gate.requests.keys()]) await this.continueNavigation(sessionId, gate, requestId);
+    }
+    if (this.closed || ![...this.targetSessions.values()].includes(sessionId)) throw new Error('Page detached during configuration');
     // Register readiness only after every required command has succeeded.
     this.fingerprintedSessions.add(sessionId);
     if (!this.pageSessions.includes(sessionId)) this.pageSessions.push(sessionId);
+  }
+
+  private async continueNavigation(sessionId: string, gate: NavigationGate, requestId: string): Promise<void> {
+    const original = gate.requests.get(requestId);
+    if (!original || gate.phase !== 'ready') return;
+    gate.requests.delete(requestId);
+    // Preserve all other headers in memory; never log cookies or credentials.
+    // A request paused before configuration can still carry its earlier UA.
+    const headers = Object.entries(original)
+      .filter(([name]) => !['user-agent', 'accept-language'].includes(name.toLowerCase()))
+      .map(([name, value]) => ({ name, value }));
+    headers.push({ name: 'User-Agent', value: this.userAgent }, { name: 'Accept-Language', value: gate.language });
+    await this.send('Fetch.continueRequest', { requestId, headers }, sessionId);
+  }
+
+  private async abortNavigation(sessionId: string): Promise<void> {
+    const gate = this.navigationGates.get(sessionId);
+    if (!gate) return;
+    gate.phase = 'failed';
+    for (const requestId of [...gate.requests.keys()]) {
+      gate.requests.delete(requestId);
+      await this.send('Fetch.failRequest', { requestId, errorReason: 'Aborted' }, sessionId).catch(() => { /* target may have closed */ });
+    }
+    if (gate.resumed) await this.send('Page.stopLoading', {}, sessionId).catch(() => { /* owner closes the browser on failure */ });
   }
 
   private fail(error: unknown): void {
     if (this.closed) return;
     const failure = error instanceof Error ? error : new Error('Page configuration failed');
     this.initializationError = failure;
-    const notify = this.initialized;
-    this.close();
-    if (notify) this.onFatalError?.(failure);
+    // Let an owner signal its browser to stop before detaching the transport.
+    try { this.onFatalError?.(failure); } finally { this.close(); }
   }
 
   async navigate(url: string): Promise<void> {
@@ -337,6 +401,7 @@ export class CdpClient {
     this.pageSessions = [];
     this.fingerprintedSessions.clear();
     this.targetSessions.clear();
+    this.navigationGates.clear();
     this.ws?.close();
     this.ws = null;
   }

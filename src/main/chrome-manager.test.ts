@@ -113,6 +113,7 @@ describe('Chrome initialization ownership and failure cleanup', () => {
     const oldFatal = h.fatalCallbacks[0];
     oldFatal();
     expect(getRuntime('owned-environment')).toBeNull();
+    expect(h.children[0].kill.mock.invocationCallOrder[0]).toBeLessThan(h.clients[0].close.mock.invocationCallOrder[0]);
     await launchEnv(environment(), 'chrome-test.exe'); devToolsReady();
     await vi.waitFor(() => expect(getCdpClient('owned-environment')).toBe(h.clients[1]));
     oldFatal();

@@ -1,6 +1,8 @@
 # Real Chromium startup checks
 
-The dedicated private Linux Actions workflow runs the actual `CdpClient` and existing configuration script against a pinned stock Chrome Headless Shell. It checks an explicitly synthetic User-Agent marker and configured language/platform/CPU/timezone on the first request and first synchronous page script. A separate ordinary target is created without harness-side configuration or resume, and a deliberately invalid timezone tests a real command refusal. Fixture observations retain the first result rather than replacing it with later reads.
+The dedicated private Linux Actions workflow runs the actual `CdpClient` and existing configuration script against a pinned stock Chrome Headless Shell. It checks an explicitly synthetic User-Agent marker and configured language/platform/CPU/timezone on the first request and first synchronous page script. A separate ordinary target is created without harness-side configuration or resume; its owned fixture cookie must survive request continuation. Deliberately invalid timezones test command refusal on both initial and new pages. Fixture observations retain the first result rather than replacing it with later reads.
+
+New debugger-waiting pages hold document requests through Fetch while their renderer starts. Requests continue only after required configuration succeeds; failed configuration aborts the held request. The controller carries the configured UA/language forward on the held request while preserving other headers. No cookies or authorization values are logged; the fixture records only whether its own synthetic cookie arrived.
 
 Only self-owned loopback fixtures are visited. The browser's outbound proxy points to a closed loopback port. Public browser dependencies and Debian packages are downloaded and checked/extracted inside the job; system packages are not installed. The job runs as an isolated unprivileged account. All product execution remains in GitHub Actions.
 

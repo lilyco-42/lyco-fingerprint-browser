@@ -312,9 +312,9 @@ export function closeEnv(envId: string): void {
   // Remove ownership before signalling the process; a late exit cannot affect
   // an environment relaunched under the same id.
   running.delete(envId);
+  try { instance.process.kill(); } catch { /* already dead */ }
   instance.connectingClient?.close();
   instance.cdpClient?.close();
-  try { instance.process.kill(); } catch { /* already dead */ }
   instance.onStatusChange?.(envId, { envId, running: false });
 }
 
