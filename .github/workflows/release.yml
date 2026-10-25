@@ -123,7 +123,7 @@ jobs:
           if ($exe.Count -ne 1) { throw 'Expected exactly one owned package executable' }
           node scripts/windows-preview-smoke.cjs $exe[0].FullName
           if ($LASTEXITCODE -ne 0) { exit 1 }
-      - name: Install the actual Setup, verify installed UI/icon/shortcuts, and uninstall
+      - name: Install and upgrade the actual Setup, verify installed UI/icon/shortcuts, and uninstall
         timeout-minutes: 6
         shell: pwsh
         run: ./scripts/windows-installer-smoke.ps1

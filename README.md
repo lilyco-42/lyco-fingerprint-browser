@@ -19,7 +19,7 @@
 
 1. 打开本仓库的 **Actions → LYCO Browser CI & Windows Installer**，选择 **Run workflow**（或查看 `main` push 触发的执行）。
 2. 工作流先在标准 Ubuntu runner 执行单元、类型和真实 Chromium 启动检查，通过后才在标准 Windows runner 构建。
-3. Windows 再运行单元检查、实际便携包的界面／本地 IPC 冒烟，以及实际 Setup 的安装、已安装界面、图标／快捷方式和卸载检查。成功后把 `.exe`、`.zip`、同名校验值与测试结果保存到 `preview-<run-id>-<attempt>` **未发布草稿**。草稿仅仓库维护者可下载审查，不占用 Actions Artifact 存储。
+3. Windows 再运行单元检查、实际便携包的界面／本地 IPC 冒烟，以及旧版 0.1.0 安装 → 新版升级 → 已安装界面、图标／快捷方式 → 卸载检查。历史安装器先校验固定 SHA-256。成功后把 `.exe`、`.zip`、同名校验值与测试结果保存到 `preview-<run-id>-<attempt>` **未发布草稿**。草稿仅仓库维护者可下载审查，不占用 Actions Artifact 存储。
 4. `main`、PR 与手动构建共用门禁；不自动把预览草稿发布给用户。历史 `ci-2` 是旧版本，不包含后续修复。
 
 **此版本只做 Windows x64 的 GitHub-hosted runner 构建**；未对所有代理节点或真实资金交易做端到端测试。执行真实购买前请再次核对账号、积分、价格及网络环境。

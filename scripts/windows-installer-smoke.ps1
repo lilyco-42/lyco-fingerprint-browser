@@ -17,8 +17,10 @@ try {
     $manifest.XmlResolver = $null
     $manifest.LoadXml($manifestText)
     $packageId = $manifest.SelectSingleNode("/*[local-name()='package']/*[local-name()='metadata']/*[local-name()='id']").InnerText
+    $packageVersion = $manifest.SelectSingleNode("/*[local-name()='package']/*[local-name()='metadata']/*[local-name()='version']").InnerText
 } finally { $archive.Dispose() }
 if ($packageId -notmatch '^[A-Za-z][A-Za-z0-9_-]{0,80}$') { throw 'Unsafe package identity' }
+if ($packageVersion -notmatch '^\d+\.\d+\.\d+$' -or [Version]$packageVersion -le [Version]'0.1.0') { throw 'Expected a new version after the historical 0.1.0 package' }
 $localRoot = [IO.Path]::GetFullPath($env:LOCALAPPDATA)
 $installRoot = [IO.Path]::GetFullPath((Join-Path $localRoot $packageId))
 if (-not $installRoot.StartsWith($localRoot + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) {
@@ -26,6 +28,7 @@ if (-not $installRoot.StartsWith($localRoot + [IO.Path]::DirectorySeparatorChar,
 }
 if (Test-Path -LiteralPath $installRoot) { throw 'Refusing to modify an existing installation' }
 $report = [ordered]@{ source=$env:GITHUB_SHA; run=$env:GITHUB_RUN_ID; productAcceptance=$false;
+    version=$packageVersion; baselineInstalled=$false; upgraded=$false;
     installed=$false; installedRenderer=$false; iconAvailable=$false; shortcutCount=0; uninstalled=$false;
     setupSha256=(Get-FileHash $setup[0].FullName -Algorithm SHA256).Hash.ToLowerInvariant() }
 $installedExe = $null
@@ -38,17 +41,30 @@ function Stop-OwnedInstalledProcesses {
 }
 
 try {
+    # Historical owned release is a fixed, hash-verified upgrade fixture only.
+    $fixtureDirectory = Join-Path $env:RUNNER_TEMP 'lyco-owned-upgrade-baseline'
+    New-Item -ItemType Directory -Path $fixtureDirectory | Out-Null
+    $baselineSetup = Join-Path $fixtureDirectory 'Setup-0.1.0.exe'
+    Invoke-WebRequest -Uri 'https://github.com/lilyco-42/lyco-fingerprint-browser/releases/download/ci-2/LYCO.Browser-0.1.0.Setup.exe' -OutFile $baselineSetup -TimeoutSec 180
+    if ((Get-FileHash $baselineSetup -Algorithm SHA256).Hash.ToLowerInvariant() -ne '4c1b207c8a7446f9bfa6bc71922cc1364ca913127ceb9f9a9b70177724a599a3') { throw 'Historical upgrade fixture digest mismatch' }
+    $baseline = Start-Process -FilePath $baselineSetup -ArgumentList '--silent' -PassThru -Wait -WindowStyle Hidden
+    if ($baseline.ExitCode -ne 0 -or -not (Test-Path -LiteralPath (Join-Path $installRoot 'app-0.1.0/lyco-browser.exe'))) { throw 'Historical upgrade fixture did not install' }
+    $report.baselineInstalled = $true
+    Stop-OwnedInstalledProcesses
     $install = Start-Process -FilePath $setup[0].FullName -ArgumentList '--silent' -PassThru -Wait -WindowStyle Hidden
     if ($install.ExitCode -ne 0) { throw 'Setup executable failed' }
     $deadline = [DateTime]::UtcNow.AddSeconds(30)
     do {
-        $candidates = @(Get-ChildItem -LiteralPath $installRoot -Recurse -File -Filter 'lyco-browser.exe' -ErrorAction SilentlyContinue)
-        if ($candidates.Count -eq 1) { $installedExe = $candidates[0].FullName; break }
+        $candidate = Join-Path $installRoot ("app-$packageVersion/lyco-browser.exe")
+        if (Test-Path -LiteralPath $candidate) { $installedExe = $candidate; break }
         Start-Sleep -Milliseconds 250
     } while ([DateTime]::UtcNow -lt $deadline)
     if (-not $installedExe) { throw 'Setup did not create the owned installed application' }
     $report.installed = $true
     Stop-OwnedInstalledProcesses
+    $portable = Get-Content -LiteralPath windows-preview-smoke.json -Raw | ConvertFrom-Json
+    if ((Get-FileHash $installedExe -Algorithm SHA256).Hash.ToLowerInvariant() -ne $portable.executableSha256) { throw 'Installed executable differs from the validated portable build' }
+    $report.upgraded = $true
     Add-Type -AssemblyName System.Drawing
     $icon = [Drawing.Icon]::ExtractAssociatedIcon($installedExe)
     try { $report.iconAvailable = $null -ne $icon -and $icon.Width -gt 0 } finally { if ($icon) { $icon.Dispose() } }
