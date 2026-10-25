@@ -139,7 +139,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ format('preview-{0}-{1}', github.run_id, github.run_attempt) }}
-          name: ${{ format('LYCO Browser preview #{0}', github.run_number) }}
+          name: LYCO Browser preview ${{ github.run_number }}
           target_commitish: ${{ github.sha }}
           prerelease: true
           draft: true
