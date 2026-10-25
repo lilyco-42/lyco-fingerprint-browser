@@ -11,8 +11,79 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: browser-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
+  source-safety:
+    if: github.repository == 'lilyco-42/lyco-fingerprint-browser' && github.actor == github.repository_owner
+    name: Public source secret-history gate
+    runs-on: ubuntu-22.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Check history with pinned official Gitleaks
+        shell: bash
+        run: |
+          directory="$RUNNER_TEMP/lyco-gitleaks"
+          mkdir -p "$directory"
+          curl --fail --location --silent --show-error --max-time 120 \
+            https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz \
+            --output "$directory/gitleaks.tar.gz"
+          printf '%s  %s\n' 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb "$directory/gitleaks.tar.gz" | sha256sum --check --status
+          tar -xzf "$directory/gitleaks.tar.gz" -C "$directory" gitleaks
+          "$directory/gitleaks" git . --log-opts='--all' --redact --no-banner --ignore-gitleaks-allow
+
+  unit:
+    needs: source-safety
+    if: github.repository == 'lilyco-42/lyco-fingerprint-browser' && github.actor == github.repository_owner
+    name: Linux unit and TypeScript gate
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: npm test -- --maxWorkers=1 --minWorkers=1 --reporter=json --outputFile=unit-results.json
+      - run: npx tsc --noEmit --pretty false
+      - name: Keep synthetic unit evidence in the job log
+        if: always()
+        run: if test -f unit-results.json; then cat unit-results.json; fi
+
+  browser:
+    needs: source-safety
+    if: github.repository == 'lilyco-42/lyco-fingerprint-browser' && github.actor == github.repository_owner
+    name: Real Chromium startup gate
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: bash scripts/prepare-browser-gate.sh
+      - run: npx tsc --noEmit --pretty false
+      - run: npx vitest run --config vitest.browser.config.ts --reporter=json --outputFile=browser-vitest.json
+      - name: Keep synthetic browser evidence in the job log
+        if: always()
+        run: |
+          for file in browser-observations.json browser-vitest.json; do
+            if test -f "$file"; then cat "$file"; fi
+          done
+
   windows:
+    needs: [unit, browser]
     name: Tests + Windows x64 installer (GitHub-hosted runner)
     runs-on: windows-latest
     timeout-minutes: 45
@@ -20,14 +91,17 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-          cache: npm
       - name: Install dependencies (GitHub Actions only)
         run: npm ci --no-audit --no-fund
       - name: Unit tests (mocked, no real payment requests)
-        run: npm test
+        run: npm test -- --maxWorkers=1 --minWorkers=1 --reporter=json --outputFile=windows-unit-results.json
+      - name: TypeScript check
+        run: npx tsc --noEmit --pretty false
       - name: Compile + package Windows installers (GitHub Actions only)
         run: npm run make
       - name: Verify release assets exist
@@ -37,19 +111,58 @@ jobs:
             Where-Object { $_.Extension -in '.exe', '.zip', '.nupkg' })
           if ($assets.Count -eq 0) { throw "No Windows installer assets found" }
           $assets | Select-Object Name, Length, FullName | Format-Table -AutoSize
+      - name: Launch the actual portable package and verify renderer and local IPC
+        timeout-minutes: 5
+        shell: pwsh
+        run: |
+          $zip=@(Get-ChildItem out/make -Recurse -File -Filter '*.zip')
+          if ($zip.Count -ne 1) { throw 'Expected exactly one Windows portable ZIP' }
+          $destination=Join-Path $env:RUNNER_TEMP 'lyco-preview-package'
+          Expand-Archive -LiteralPath $zip[0].FullName -DestinationPath $destination
+          $exe=@(Get-ChildItem $destination -Recurse -File -Filter 'lyco-browser.exe')
+          if ($exe.Count -ne 1) { throw 'Expected exactly one owned package executable' }
+          node scripts/windows-preview-smoke.cjs $exe[0].FullName
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+      - name: Install and upgrade the actual Setup, verify installed UI/icon/shortcuts, and uninstall
+        timeout-minutes: 6
+        shell: pwsh
+        run: ./scripts/windows-installer-smoke.ps1
+      - name: Write package digests and build identity
+        shell: pwsh
+        run: |
+          $assets=@(Get-ChildItem out/make -Recurse -File | Where-Object { $_.Extension -in '.exe','.zip','.nupkg' })
+          $destination=Join-Path $pwd 'out/preview-release'
+          New-Item -ItemType Directory -Path $destination | Out-Null
+          $names=@{}
+          foreach ($asset in $assets) {
+            $name=$asset.Name -replace '[^A-Za-z0-9._-]', '.'
+            if ($names.ContainsKey($name)) { throw 'Normalized preview filenames collide' }
+            $names[$name]=$true
+            Copy-Item -LiteralPath $asset.FullName -Destination (Join-Path $destination $name)
+          }
+          Get-ChildItem -LiteralPath $destination -File | ForEach-Object { "{0}  {1}" -f (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant(), $_.Name } |
+            Set-Content -Encoding utf8 SHA256SUMS.txt
+          @{ repository=$env:GITHUB_REPOSITORY; testedCommit=$env:GITHUB_SHA; runId=$env:GITHUB_RUN_ID;
+             runNumber=$env:GITHUB_RUN_NUMBER; platform='windows-x64'; productAcceptance=$false } |
+            ConvertTo-Json | Set-Content -Encoding utf8 build-metadata.json
       # Actions Artifact upload is intentionally not used: account storage quota
       # is full. Publish assets straight to GitHub Releases from the Windows runner.
-      - name: Publish pre-release assets directly to GitHub Releases
-        if: github.event_name != 'pull_request'
+      - name: Retain the gated preview in an unpublished draft
+        if: success() && github.repository == 'lilyco-42/lyco-fingerprint-browser' && github.actor == github.repository_owner
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.ref_type == 'tag' && github.ref_name || format('ci-{0}', github.run_number) }}
-          name: ${{ github.ref_type == 'tag' && github.ref_name || format('LYCO Browser CI {0}', github.run_number) }}
+          tag_name: ${{ format('preview-{0}-{1}', github.run_id, github.run_attempt) }}
+          name: LYCO Browser preview ${{ github.run_number }}
           target_commitish: ${{ github.sha }}
           prerelease: true
+          draft: true
           make_latest: false
           generate_release_notes: false
           files: |
-            out/make/**/*.exe
-            out/make/**/*.zip
-            out/make/**/*.nupkg
+            out/preview-release/*
+            SHA256SUMS.txt
+            build-metadata.json
+            windows-preview-smoke.json
+            windows-installed-smoke.json
+            windows-installer-smoke.json
+            windows-unit-results.json

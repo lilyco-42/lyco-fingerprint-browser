@@ -18,11 +18,13 @@
 ## 如何获取安装包
 
 1. 打开本仓库的 **Actions → LYCO Browser CI & Windows Installer**，选择 **Run workflow**（或查看 `main` push 触发的执行）。
-2. 等待测试和 Windows x64 打包完成。
-3. 在仓库 **Releases** 页面打开最新 `ci-<run>` 预发布版本，下载 Windows `.exe` 或 `.zip`。当前 Actions Artifact 额度已满，因此使用 Releases 直接分发。
-4. 推送 `main` 自动生成 `ci-<run>` 预发布版本；打 `v*` 标签的构建会以版本号发布 **Pre-release**。
+2. 工作流先在标准 Ubuntu runner 执行单元、类型和真实 Chromium 启动检查，通过后才在标准 Windows runner 构建。
+3. Windows 再运行单元检查、实际便携包的界面／本地 IPC 冒烟，以及旧版 0.1.0 安装 → 新版升级 → 已安装界面、图标／快捷方式 → 卸载检查。历史安装器先校验固定 SHA-256。成功后把 `.exe`、`.zip`、同名校验值与测试结果保存到 `preview-<run-id>-<attempt>` **未发布草稿**。草稿仅仓库维护者可下载审查，不占用 Actions Artifact 存储。
+4. `main`、PR 与手动构建共用门禁；不自动把预览草稿发布给用户。历史 `ci-2` 是旧版本，不包含后续修复。
 
 **此版本只做 Windows x64 的 GitHub-hosted runner 构建**；未对所有代理节点或真实资金交易做端到端测试。执行真实购买前请再次核对账号、积分、价格及网络环境。
+
+标准 GitHub 托管 runner 在公开仓库使用；本项目不使用收费 larger runner，也不依赖私人 Radxa 或韩国服务器。构建号可在上述 Actions 执行详情查看。Windows 临时 VM 的检查不等于用户本机、所有浏览器会话或第三方平台的完整验收。
 
 ## 产品边界
 
@@ -35,3 +37,4 @@
 - 基础项目：`taills/Mirage-Browser`，上游提交 `d31e14887ae75863693070acead8c624224ad0eb`，**MIT License**。
 - 保留 `LICENSE` 中的原始版权/许可说明和上游 git 历史。
 - LYCO 的新增适配器代码仅依赖本站现有公开客户端 API，不包含后台管理员令牌或代理面板凭据。
+- 第三方组件与运行数据边界见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) 和 [SECURITY.md](SECURITY.md)。不要上传用户 Profile、Cookie、订阅链接或环境导出包。
