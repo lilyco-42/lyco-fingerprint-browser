@@ -21,6 +21,7 @@ const readings = new Map<string, Reading>();
 const evidence: {
   source: string | undefined; run: string | undefined; productAcceptance: false;
   version: string; binarySha256: string; cases: { name: string; status: string; first?: Reading; fatalError?: string; protocol?: CdpProtocolTrace[] }[];
+  protocolControls?: { interception: boolean; beforeAbort: string[]; afterAbort: string[] }[];
 } = { source: process.env.GITHUB_SHA, run: process.env.GITHUB_RUN_ID, productAcceptance: false,
   version: '', binarySha256: '', cases: [] };
 let origin = '';
@@ -204,4 +205,56 @@ test('a required-command refusal on a new target aborts its held first request',
     expect(readings.has(name)).toBe(false);
     await expect(client.navigate(origin + '/first?case=' + name)).rejects.toThrow('No configured page');
   });
+});
+
+// Transport diagnosis only: no fingerprint configuration, application source,
+// detector, credentials or public URLs. Existing acceptance tests stay intact.
+test('records renderer startup acknowledgements with and without a held document', async () => {
+  evidence.protocolControls = [];
+  for (const interception of [true, false]) {
+    await withBrowser('protocol-control', fingerprint.timezone, async (_client, _ua, browserUrl) => {
+      const ws = new WebSocket(browserUrl);
+      const commands = new Map<number, string>();
+      const responses: string[] = [];
+      let nextId = 0, session = '', request = '';
+      const send = (method: string, params: object = {}, sessionId?: string) => {
+        const id = ++nextId; commands.set(id, method);
+        ws.send(JSON.stringify({ id, method, params, sessionId }));
+      };
+      ws.on('message', data => {
+        const msg = JSON.parse(data.toString()) as { id?: number; method?: string;
+          error?: unknown; params?: { sessionId?: string; requestId?: string; targetInfo?: { type: string } } };
+        if (msg.id !== undefined) responses.push((msg.error ? 'error:' : 'ok:') + commands.get(msg.id));
+        if (msg.method === 'Target.attachedToTarget' && msg.params?.targetInfo?.type === 'page') session = msg.params.sessionId!;
+        if (msg.method === 'Fetch.requestPaused') request = msg.params!.requestId!;
+      });
+      try {
+        await new Promise<void>((resolve, reject) => { ws.once('open', resolve); ws.once('error', reject); });
+        // Existing blank page is deliberately excluded: diagnose a NEW renderer.
+        send('Target.setAutoAttach', { autoAttach: true, waitForDebuggerOnStart: true, flatten: true });
+        await vi.waitFor(() => expect(responses).toContain('ok:Target.setAutoAttach'));
+        session = '';
+        await createTarget(browserUrl, origin + '/prime');
+        await vi.waitFor(() => expect(session).not.toBe(''));
+        if (interception) {
+          send('Fetch.enable', { patterns: [{ resourceType: 'Document', requestStage: 'Request' }] }, session);
+          await vi.waitFor(() => expect(responses).toContain('ok:Fetch.enable'));
+        }
+        send('Runtime.enable', {}, session);
+        send('Page.enable', {}, session);
+        send('Emulation.setTimezoneOverride', { timezoneId: 'Etc/UTC' }, session);
+        send('Page.addScriptToEvaluateOnNewDocument', { source: '/* owned startup control */' }, session);
+        send('Runtime.runIfWaitingForDebugger', {}, session);
+        await pause(1500);
+        const beforeAbort = [...responses];
+        if (interception) {
+          expect(request).not.toBe('');
+          send('Fetch.failRequest', { requestId: request, errorReason: 'Aborted' }, session);
+        }
+        await pause(1000);
+        evidence.protocolControls!.push({ interception, beforeAbort, afterAbort: [...responses] });
+        if (!interception) expect(responses).toContain('ok:Runtime.runIfWaitingForDebugger');
+      } finally { ws.close(); }
+    });
+  }
 });
