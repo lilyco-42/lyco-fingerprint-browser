@@ -176,7 +176,7 @@ export class CdpClient {
     } else if (msg.method === 'Fetch.requestPaused' && msg.sessionId) {
       const gate = this.navigationGates.get(msg.sessionId);
       if (!gate) return;
-      const { requestId, request } = msg.params as { requestId: string; request: { url?: string; method?: string; headers: Record<string, string> } };
+      const { requestId, request } = msg.params as { requestId: string; request: { url?: string; urlFragment?: string; method?: string; headers: Record<string, string> } };
       gate.requests.add(requestId);
       if (gate.phase === 'configuring') {
         // A renderer for a new URL cannot acknowledge Runtime/Page setup while
@@ -187,7 +187,9 @@ export class CdpClient {
             gate.startupError = new Error('New page startup cannot safely replay this navigation');
           } else {
             const referrer = Object.entries(request.headers).find(([key]) => key.toLowerCase() === 'referer')?.[1];
-            gate.startupNavigation = { url: request.url, referrer };
+            // CDP Network.Request.url excludes the fragment. Preserve the
+            // separate suffix so hash routers and callback routes still work.
+            gate.startupNavigation = { url: request.url + (request.urlFragment ?? ''), referrer };
           }
         }
         gate.requests.delete(requestId);
@@ -353,6 +355,10 @@ export class CdpClient {
     if (this.closed) throw new Error('Client closed');
     const gate = this.navigationGates.get(sessionId);
     if (gate) {
+      // A blank target can issue its first navigation while an earlier setup
+      // command is awaiting acknowledgement. That late refusal is as binding
+      // as one observed immediately after renderer resume.
+      if (gate.startupError) throw gate.startupError;
       gate.phase = 'ready';
       for (const requestId of [...gate.requests.keys()]) await this.continueNavigation(sessionId, gate, requestId);
       // Restore normal navigation semantics after startup. Do not permanently

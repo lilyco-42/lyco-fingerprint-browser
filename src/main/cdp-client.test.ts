@@ -7,7 +7,7 @@ const h = vi.hoisted(() => ({
   commands: [] as Command[], sockets: [] as (EventEmitter & { readyState: number })[],
   autoAttach: true, targets: [{ targetId: 'page-one', type: 'page', url: 'about:blank' }],
   refused: '', scriptException: false, delayedMethod: '', delayedSession: '', delay: null as Promise<void> | null,
-  pauseDocument: false, startupMethod: 'GET', requireResume: false, resumed: new Set<string>(),
+  pauseDocument: false, startupMethod: 'GET', startupFragment: '', requireResume: false, resumed: new Set<string>(),
 }));
 
 vi.mock('node:http', async () => {
@@ -50,7 +50,7 @@ vi.mock('ws', async () => {
       if (this.readyState !== FakeSocket.OPEN) return;
       if (command.method === 'Fetch.enable' && h.pauseDocument && h.refused !== 'Fetch.enable') {
         this.emit('message', JSON.stringify({ method: 'Fetch.requestPaused', sessionId: command.sessionId, params: {
-          requestId: 'owned-document', request: { url: 'https://owned-fixture.invalid/new', method: h.startupMethod,
+          requestId: 'owned-document', request: { url: 'https://owned-fixture.invalid/new', urlFragment: h.startupFragment, method: h.startupMethod,
             headers: { Referer: 'https://owned-fixture.invalid/parent', Cookie: 'owned_cookie=1', Authorization: 'Bearer owned-fixture' } },
         } }));
       }
@@ -84,7 +84,7 @@ beforeEach(() => {
   h.commands = []; h.sockets = []; h.autoAttach = true;
   h.targets = [{ targetId: 'page-one', type: 'page', url: 'about:blank' }];
   h.refused = ''; h.scriptException = false; h.delayedMethod = ''; h.delayedSession = ''; h.delay = null;
-  h.pauseDocument = false; h.startupMethod = 'GET'; h.requireResume = false; h.resumed = new Set();
+  h.pauseDocument = false; h.startupMethod = 'GET'; h.startupFragment = ''; h.requireResume = false; h.resumed = new Set();
   client = new CdpClient(9222, fingerprint, 'LYCO-Startup-Contract-Test');
 });
 afterEach(() => { client.close(); });
@@ -143,6 +143,13 @@ describe('CDP required page-configuration barrier (no real browser or detector)'
     expect(h.commands.some(command => command.method === 'Fetch.continueRequest')).toBe(false);
   });
 
+  it('preserves the separate URL fragment when replaying a safe GET', async () => {
+    await client.connect(); h.pauseDocument = true; h.startupFragment = '#section/owned?fixture=1';
+    attached('session-two', 'page-two', true);
+    await vi.waitFor(() => expect(h.commands.some(command => command.sessionId === 'session-two' && command.method === 'Page.navigate')).toBe(true));
+    expect(h.commands.find(command => command.method === 'Page.navigate')?.params.url).toBe('https://owned-fixture.invalid/new#section/owned?fixture=1');
+  });
+
   it('cannot resume a new renderer if its document request gate is rejected', async () => {
     const fatal = vi.fn();
     client = new CdpClient(9222, fingerprint, 'LYCO-Startup-Contract-Test', undefined, fatal);
@@ -170,6 +177,26 @@ describe('CDP required page-configuration barrier (no real browser or detector)'
     expect(fatal.mock.calls[0][0].message).toContain('cannot safely replay');
     expect(h.commands.some(command => command.method === 'Page.navigate')).toBe(false);
     expect(h.commands.some(command => command.method === 'Fetch.continueRequest')).toBe(false);
+  });
+
+  it('propagates an unsafe first navigation received later during blank-page configuration', async () => {
+    const fatal = vi.fn();
+    client = new CdpClient(9222, fingerprint, 'LYCO-Startup-Contract-Test', undefined, fatal);
+    await client.connect();
+    let configured!: () => void;
+    h.delayedMethod = 'Network.enable'; h.delayedSession = 'session-two';
+    h.delay = new Promise<void>(resolve => { configured = resolve; });
+    attached('session-two', 'page-two', true);
+    await vi.waitFor(() => expect(h.commands.some(command => command.sessionId === 'session-two' && command.method === 'Network.enable')).toBe(true));
+    h.sockets[0].emit('message', JSON.stringify({ method: 'Fetch.requestPaused', sessionId: 'session-two', params: {
+      requestId: 'late-post', request: { url: 'https://owned-fixture.invalid/submit', method: 'POST', headers: {} },
+    } }));
+    configured();
+    await vi.waitFor(() => expect(fatal).toHaveBeenCalledTimes(1));
+    expect(fatal.mock.calls[0][0].message).toContain('cannot safely replay');
+    expect(h.commands.some(command => command.method === 'Fetch.failRequest' && command.params.requestId === 'late-post')).toBe(true);
+    expect(h.commands.some(command => command.method === 'Fetch.disable' || command.method === 'Page.navigate' || command.method === 'Fetch.continueRequest')).toBe(false);
+    await expect(client.navigate('https://owned-fixture.invalid/after-refusal')).rejects.toThrow('No configured page');
   });
 
   it('waits for required configuration before resuming or allowing initial navigation', async () => {

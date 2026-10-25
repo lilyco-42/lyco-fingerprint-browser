@@ -15,7 +15,7 @@ if (process.env.GITHUB_ACTIONS !== 'true' || process.platform !== 'linux') throw
 const binary = process.env.LYCO_BROWSER_EXE;
 if (!binary || !path.isAbsolute(binary)) throw new Error('Pinned browser dependency is missing');
 
-interface PageReading { userAgent: string; language: string; timezone: string; platform: string; cores: number }
+interface PageReading { userAgent: string; language: string; timezone: string; platform: string; cores: number; hash: string }
 interface Reading { requests: number; reports: number; ua?: string; language?: string; fixtureCookie?: boolean; page?: PageReading }
 const readings = new Map<string, Reading>();
 const evidence: {
@@ -45,7 +45,7 @@ const fixture = http.createServer((req, res) => {
     res.writeHead(200, { 'Content-Type': 'text/html', 'Cache-Control': 'no-store' });
     res.end('<!doctype html><title>Owned startup fixture</title><script>'
       + 'const first={userAgent:navigator.userAgent,language:navigator.language,platform:navigator.platform,'
-      + 'cores:navigator.hardwareConcurrency,timezone:Intl.DateTimeFormat().resolvedOptions().timeZone};'
+      + 'cores:navigator.hardwareConcurrency,timezone:Intl.DateTimeFormat().resolvedOptions().timeZone,hash:location.hash};'
       + `fetch('/report?case=${name}',{method:'POST',body:JSON.stringify(first)});</script>`);
     return;
   }
@@ -145,7 +145,7 @@ async function firstReading(name: string, ua: string): Promise<void> {
   expect(row.ua).toBe(ua); expect(row.language).toBe(fingerprint.language);
   if (name === 'new-page') expect(row.fixtureCookie).toBe(true);
   expect(row.page).toEqual({ userAgent: ua, language: fingerprint.language, platform: fingerprint.platform,
-    cores: fingerprint.hardwareConcurrency, timezone: fingerprint.timezone });
+    cores: fingerprint.hardwareConcurrency, timezone: fingerprint.timezone, hash: name === 'new-page' ? '#startup-fragment' : '' });
 }
 
 async function createTarget(browserUrl: string, url: string): Promise<void> {
@@ -180,7 +180,7 @@ test('an ordinary new target retains configured values on its first request and 
       const value = await client.runScript('document.cookie');
       expect(value.result).toContain('lyco_owned_fixture=owned');
     }, { timeout: 5000, interval: 50 });
-    await createTarget(browserUrl, origin + '/first?case=new-page');
+    await createTarget(browserUrl, origin + '/first?case=new-page#startup-fragment');
     await firstReading('new-page', ua);
   });
 });
