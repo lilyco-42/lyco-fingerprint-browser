@@ -123,11 +123,24 @@ jobs:
           if ($exe.Count -ne 1) { throw 'Expected exactly one owned package executable' }
           node scripts/windows-preview-smoke.cjs $exe[0].FullName
           if ($LASTEXITCODE -ne 0) { exit 1 }
+      - name: Install the actual Setup, verify installed UI/icon/shortcuts, and uninstall
+        timeout-minutes: 6
+        shell: pwsh
+        run: ./scripts/windows-installer-smoke.ps1
       - name: Write package digests and build identity
         shell: pwsh
         run: |
           $assets=@(Get-ChildItem out/make -Recurse -File | Where-Object { $_.Extension -in '.exe','.zip','.nupkg' })
-          $assets | ForEach-Object { "{0}  {1}" -f (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant(), $_.Name } |
+          $destination=Join-Path $pwd 'out/preview-release'
+          New-Item -ItemType Directory -Path $destination | Out-Null
+          $names=@{}
+          foreach ($asset in $assets) {
+            $name=$asset.Name -replace '[^A-Za-z0-9._-]', '.'
+            if ($names.ContainsKey($name)) { throw 'Normalized preview filenames collide' }
+            $names[$name]=$true
+            Copy-Item -LiteralPath $asset.FullName -Destination (Join-Path $destination $name)
+          }
+          Get-ChildItem -LiteralPath $destination -File | ForEach-Object { "{0}  {1}" -f (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant(), $_.Name } |
             Set-Content -Encoding utf8 SHA256SUMS.txt
           @{ repository=$env:GITHUB_REPOSITORY; testedCommit=$env:GITHUB_SHA; runId=$env:GITHUB_RUN_ID;
              runNumber=$env:GITHUB_RUN_NUMBER; platform='windows-x64'; productAcceptance=$false } |
@@ -146,10 +159,10 @@ jobs:
           make_latest: false
           generate_release_notes: false
           files: |
-            out/make/**/*.exe
-            out/make/**/*.zip
-            out/make/**/*.nupkg
+            out/preview-release/*
             SHA256SUMS.txt
             build-metadata.json
             windows-preview-smoke.json
+            windows-installed-smoke.json
+            windows-installer-smoke.json
             windows-unit-results.json

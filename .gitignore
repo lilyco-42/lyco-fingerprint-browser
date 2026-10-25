@@ -76,6 +76,8 @@ browser-vitest.json
 unit-results.json
 windows-unit-results.json
 windows-preview-smoke.json
+windows-installed-smoke.json
+windows-installer-smoke.json
 build-metadata.json
 SHA256SUMS.txt
 

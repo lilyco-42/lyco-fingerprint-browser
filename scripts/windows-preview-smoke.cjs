@@ -13,6 +13,10 @@ if (process.env.GITHUB_ACTIONS !== 'true' || process.platform !== 'win32') {
   throw new Error('Disposable Windows GitHub Actions only');
 }
 const executable = process.argv[2];
+const reportFile = process.argv[3] || 'windows-preview-smoke.json';
+if (!['windows-preview-smoke.json', 'windows-installed-smoke.json'].includes(reportFile)) {
+  throw new Error('Unexpected owned smoke report name');
+}
 if (!executable || !path.isAbsolute(executable) || path.basename(executable).toLowerCase() !== 'lyco-browser.exe') {
   throw new Error('Expected the owned portable package executable');
 }
@@ -93,7 +97,7 @@ function readRenderer(url) {
       while (child.exitCode === null && Date.now() < deadline) await sleep(50);
       if (child.exitCode === null) throw new Error('Owned preview process did not stop');
     }
-    await fs.writeFile('windows-preview-smoke.json', JSON.stringify(report, null, 2));
+    await fs.writeFile(reportFile, JSON.stringify(report, null, 2));
     await fs.rm(profile, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
     console.log(JSON.stringify(report));
   }
