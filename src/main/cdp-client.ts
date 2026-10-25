@@ -41,8 +41,9 @@ export interface CdpProtocolTrace {
 interface NavigationGate {
   phase: 'configuring' | 'ready' | 'failed';
   resumed: boolean;
-  language: string;
-  requests: Map<string, Record<string, string>>;
+  requests: Set<string>;
+  startupNavigation?: { url: string; referrer?: string };
+  startupError?: Error;
 }
 
 export class CdpClient {
@@ -175,9 +176,23 @@ export class CdpClient {
     } else if (msg.method === 'Fetch.requestPaused' && msg.sessionId) {
       const gate = this.navigationGates.get(msg.sessionId);
       if (!gate) return;
-      const { requestId, request } = msg.params as { requestId: string; request: { headers: Record<string, string> } };
-      gate.requests.set(requestId, request.headers);
-      if (gate.phase === 'ready') {
+      const { requestId, request } = msg.params as { requestId: string; request: { url?: string; method?: string; headers: Record<string, string> } };
+      gate.requests.add(requestId);
+      if (gate.phase === 'configuring') {
+        // A renderer for a new URL cannot acknowledge Runtime/Page setup while
+        // its initial Document is held. Abort that provisional request locally;
+        // only a safe GET can be replayed after acknowledged configuration.
+        if (!gate.startupNavigation && !gate.startupError) {
+          if (request.method !== 'GET' || !request.url || !/^https?:\/\//i.test(request.url)) {
+            gate.startupError = new Error('New page startup cannot safely replay this navigation');
+          } else {
+            const referrer = Object.entries(request.headers).find(([key]) => key.toLowerCase() === 'referer')?.[1];
+            gate.startupNavigation = { url: request.url, referrer };
+          }
+        }
+        gate.requests.delete(requestId);
+        this.send('Fetch.failRequest', { requestId, errorReason: 'Aborted' }, msg.sessionId).catch(error => this.fail(error));
+      } else if (gate.phase === 'ready') {
         this.continueNavigation(msg.sessionId, gate, requestId).catch(error => {
           this.abortNavigation(msg.sessionId!).finally(() => this.fail(error));
         });
@@ -257,15 +272,14 @@ export class CdpClient {
   private async configurePage(sessionId: string, required = true, waitingForDebugger = false): Promise<void> {
 
     if (required && waitingForDebugger) {
-      // Runtime.enable itself can wait for renderer startup. Hold document
-      // requests in the browser process before allowing that startup; required
-      // configuration still has to succeed before a request is continued.
-      const gate: NavigationGate = { phase: 'configuring', resumed: false,
-        language: this.fingerprint.language, requests: new Map() };
+      // The provisional document is aborted by handleMessage, allowing an
+      // error document to initialize without visiting the target server.
+      const gate: NavigationGate = { phase: 'configuring', resumed: false, requests: new Set() };
       this.navigationGates.set(sessionId, gate);
       await this.send('Fetch.enable', { patterns: [{ resourceType: 'Document', requestStage: 'Request' }] }, sessionId);
       gate.resumed = true;
       await this.send('Runtime.runIfWaitingForDebugger', {}, sessionId);
+      if (gate.startupError) throw gate.startupError;
     }
 
     const fp = this.fingerprint;
@@ -345,24 +359,25 @@ export class CdpClient {
     if (gate) {
       gate.phase = 'ready';
       for (const requestId of [...gate.requests.keys()]) await this.continueNavigation(sessionId, gate, requestId);
+      // Restore normal navigation semantics after startup. Do not permanently
+      // intercept downloads, POSTs or later navigations in an already-ready tab.
+      await this.send('Fetch.disable', {}, sessionId);
     }
     if (this.closed || ![...this.targetSessions.values()].includes(sessionId)) throw new Error('Page detached during configuration');
     // Register readiness only after every required command has succeeded.
     this.fingerprintedSessions.add(sessionId);
     if (!this.pageSessions.includes(sessionId)) this.pageSessions.push(sessionId);
+    if (gate?.startupNavigation) {
+      const result = await this.send('Page.navigate', gate.startupNavigation, sessionId) as { errorText?: string } | undefined;
+      if (result?.errorText) throw new Error('New page startup navigation failed');
+    }
+    this.navigationGates.delete(sessionId);
   }
 
   private async continueNavigation(sessionId: string, gate: NavigationGate, requestId: string): Promise<void> {
-    const original = gate.requests.get(requestId);
-    if (!original || gate.phase !== 'ready') return;
+    if (!gate.requests.has(requestId) || gate.phase !== 'ready') return;
     gate.requests.delete(requestId);
-    // Preserve all other headers in memory; never log cookies or credentials.
-    // A request paused before configuration can still carry its earlier UA.
-    const headers = Object.entries(original)
-      .filter(([name]) => !['user-agent', 'accept-language'].includes(name.toLowerCase()))
-      .map(([name, value]) => ({ name, value }));
-    headers.push({ name: 'User-Agent', value: this.userAgent }, { name: 'Accept-Language', value: gate.language });
-    await this.send('Fetch.continueRequest', { requestId, headers }, sessionId);
+    await this.send('Fetch.continueRequest', { requestId }, sessionId);
   }
 
   private async abortNavigation(sessionId: string): Promise<void> {

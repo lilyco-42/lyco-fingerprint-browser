@@ -7,7 +7,7 @@ const h = vi.hoisted(() => ({
   commands: [] as Command[], sockets: [] as (EventEmitter & { readyState: number })[],
   autoAttach: true, targets: [{ targetId: 'page-one', type: 'page', url: 'about:blank' }],
   refused: '', scriptException: false, delayedMethod: '', delayedSession: '', delay: null as Promise<void> | null,
-  pauseDocument: false, requireResume: false, resumed: new Set<string>(),
+  pauseDocument: false, startupMethod: 'GET', requireResume: false, resumed: new Set<string>(),
 }));
 
 vi.mock('node:http', async () => {
@@ -50,8 +50,8 @@ vi.mock('ws', async () => {
       if (this.readyState !== FakeSocket.OPEN) return;
       if (command.method === 'Fetch.enable' && h.pauseDocument && h.refused !== 'Fetch.enable') {
         this.emit('message', JSON.stringify({ method: 'Fetch.requestPaused', sessionId: command.sessionId, params: {
-          requestId: 'owned-document', request: { headers: { 'User-Agent': 'unconfigured', 'Accept-Language': 'unconfigured-language',
-            Cookie: 'owned_cookie=1', Authorization: 'Bearer owned-fixture', Accept: 'text/html' } },
+          requestId: 'owned-document', request: { url: 'https://owned-fixture.invalid/new', method: h.startupMethod,
+            headers: { Referer: 'https://owned-fixture.invalid/parent', Cookie: 'owned_cookie=1', Authorization: 'Bearer owned-fixture' } },
         } }));
       }
       if (command.method === 'Runtime.runIfWaitingForDebugger' && command.sessionId) h.resumed.add(command.sessionId);
@@ -84,7 +84,7 @@ beforeEach(() => {
   h.commands = []; h.sockets = []; h.autoAttach = true;
   h.targets = [{ targetId: 'page-one', type: 'page', url: 'about:blank' }];
   h.refused = ''; h.scriptException = false; h.delayedMethod = ''; h.delayedSession = ''; h.delay = null;
-  h.pauseDocument = false; h.requireResume = false; h.resumed = new Set();
+  h.pauseDocument = false; h.startupMethod = 'GET'; h.requireResume = false; h.resumed = new Set();
   client = new CdpClient(9222, fingerprint, 'LYCO-Startup-Contract-Test');
 });
 afterEach(() => { client.close(); });
@@ -103,32 +103,32 @@ describe('CDP required page-configuration barrier (no real browser or detector)'
       if (event.kind === 'command') throw new Error('Observer must not control transport');
     });
     await client.connect(); h.pauseDocument = true; attached('session-two', 'page-two', true);
-    await vi.waitFor(() => expect(h.commands.some(command => command.method === 'Fetch.continueRequest')).toBe(true));
+    await vi.waitFor(() => expect(h.commands.some(command => command.method === 'Fetch.disable')).toBe(true));
     h.refused = 'Page.navigate';
     await expect(client.navigate('https://owned-fixture.invalid/private-query')).rejects.toThrow();
-    expect(traces.some(event => event.kind === 'command' && event.method === 'Fetch.continueRequest')).toBe(true);
+    expect(traces.some(event => event.kind === 'command' && event.method === 'Fetch.failRequest')).toBe(true);
     expect(traces.some(event => event.kind === 'response' && event.method === 'Page.navigate' && event.errorCode === -32000)).toBe(true);
     expect(JSON.stringify(traces)).not.toMatch(/private-query|owned_cookie|owned-fixture|Authorization|CI configuration fixture|Synthetic required-command refusal/);
   });
 
-  it('holds document requests while resuming a waiting renderer and configuring its future document', async () => {
+  it('aborts provisional GET before configuring and replaying it through normal navigation', async () => {
     const fatal = vi.fn();
     client = new CdpClient(9222, fingerprint, 'LYCO-Startup-Contract-Test', undefined, fatal);
     await client.connect(); h.refused = 'Runtime.evaluate'; h.requireResume = true; h.pauseDocument = true;
     attached('session-two', 'page-two', true);
-    await vi.waitFor(() => expect(h.commands.some(command => command.sessionId === 'session-two' && command.method === 'Fetch.continueRequest')).toBe(true));
+    await vi.waitFor(() => expect(h.commands.some(command => command.sessionId === 'session-two' && command.method === 'Page.navigate')).toBe(true));
     const commands = h.commands.filter(command => command.sessionId === 'session-two').map(command => command.method);
     expect(commands).toContain('Page.addScriptToEvaluateOnNewDocument');
     expect(commands).not.toContain('Runtime.evaluate');
     expect(commands.indexOf('Runtime.runIfWaitingForDebugger')).toBeGreaterThan(commands.indexOf('Fetch.enable'));
     expect(commands.indexOf('Runtime.enable')).toBeGreaterThan(commands.indexOf('Runtime.runIfWaitingForDebugger'));
-    expect(commands.indexOf('Fetch.continueRequest')).toBeGreaterThan(commands.indexOf('Page.addScriptToEvaluateOnNewDocument'));
-    const request = h.commands.find(command => command.method === 'Fetch.continueRequest')!;
-    expect(request.params.headers).toEqual(expect.arrayContaining([
-      { name: 'User-Agent', value: 'LYCO-Startup-Contract-Test' }, { name: 'Accept-Language', value: 'en-US' },
-      { name: 'Cookie', value: 'owned_cookie=1' }, { name: 'Authorization', value: 'Bearer owned-fixture' },
-      { name: 'Accept', value: 'text/html' },
-    ]));
+    expect(commands.indexOf('Fetch.failRequest')).toBeLessThan(commands.indexOf('Runtime.enable'));
+    expect(commands.indexOf('Fetch.disable')).toBeGreaterThan(commands.indexOf('Page.addScriptToEvaluateOnNewDocument'));
+    expect(commands.indexOf('Page.navigate')).toBeGreaterThan(commands.indexOf('Fetch.disable'));
+    expect(h.commands.find(command => command.method === 'Page.navigate')?.params).toEqual({
+      url: 'https://owned-fixture.invalid/new', referrer: 'https://owned-fixture.invalid/parent',
+    });
+    expect(h.commands.some(command => command.method === 'Fetch.continueRequest')).toBe(false);
     expect(fatal).not.toHaveBeenCalled();
   });
 
@@ -152,15 +152,24 @@ describe('CDP required page-configuration barrier (no real browser or detector)'
     expect(h.commands.some(command => command.sessionId === 'session-two' && command.method === 'Runtime.runIfWaitingForDebugger')).toBe(false);
   });
 
-  it('also protects the first document when a new blank page has no request during setup', async () => {
+  it('disables startup interception before ordinary navigation of a newly configured blank page', async () => {
     await client.connect(); attached('session-two', 'page-two', true);
-    await vi.waitFor(() => expect(h.commands.some(command => command.sessionId === 'session-two' && command.method === 'Page.addScriptToEvaluateOnNewDocument')).toBe(true));
+    await vi.waitFor(() => expect(h.commands.some(command => command.sessionId === 'session-two' && command.method === 'Fetch.disable')).toBe(true));
     await new Promise(resolve => setTimeout(resolve, 0));
     expect(h.commands.some(command => command.method === 'Fetch.continueRequest')).toBe(false);
-    h.sockets[0].emit('message', JSON.stringify({ method: 'Fetch.requestPaused', sessionId: 'session-two', params: {
-      requestId: 'later-document', request: { headers: { Accept: 'text/html' } },
-    } }));
-    await vi.waitFor(() => expect(h.commands.some(command => command.method === 'Fetch.continueRequest' && command.params.requestId === 'later-document')).toBe(true));
+    await client.navigate('https://owned-fixture.invalid/after-startup');
+    expect(h.commands.filter(command => command.method === 'Page.navigate').at(-1)?.sessionId).toBe('session-two');
+  });
+
+  it('refuses a new-page POST instead of silently replaying it as a GET', async () => {
+    const fatal = vi.fn();
+    client = new CdpClient(9222, fingerprint, 'LYCO-Startup-Contract-Test', undefined, fatal);
+    await client.connect(); h.pauseDocument = true; h.startupMethod = 'POST';
+    attached('session-two', 'page-two', true);
+    await vi.waitFor(() => expect(fatal).toHaveBeenCalledTimes(1));
+    expect(fatal.mock.calls[0][0].message).toContain('cannot safely replay');
+    expect(h.commands.some(command => command.method === 'Page.navigate')).toBe(false);
+    expect(h.commands.some(command => command.method === 'Fetch.continueRequest')).toBe(false);
   });
 
   it('waits for required configuration before resuming or allowing initial navigation', async () => {
@@ -212,12 +221,12 @@ describe('CDP required page-configuration barrier (no real browser or detector)'
     expect(h.sockets[0].readyState).toBe(3);
   });
 
-  it.each(['Network.enable', 'Fetch.continueRequest'])('ignores a page detached during %s without promoting its late result to readiness', async method => {
+  it.each(['Network.enable', 'Fetch.disable'])('ignores a page detached during %s without promoting its late result to readiness', async method => {
     const fatal = vi.fn();
     client = new CdpClient(9222, fingerprint, 'LYCO-Startup-Contract-Test', undefined, fatal);
     await client.connect();
     let finish!: () => void;
-    h.delayedMethod = method; h.delayedSession = 'session-two'; h.pauseDocument = method === 'Fetch.continueRequest';
+    h.delayedMethod = method; h.delayedSession = 'session-two'; h.pauseDocument = method === 'Fetch.disable';
     h.delay = new Promise<void>(resolve => { finish = resolve; });
     attached('session-two', 'page-two', h.pauseDocument);
     await vi.waitFor(() => expect(h.commands.some(command => command.sessionId === 'session-two' && command.method === method)).toBe(true));
