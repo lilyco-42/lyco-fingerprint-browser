@@ -24,7 +24,11 @@ PY
 browser="$work/chrome-headless-shell-linux64/chrome-headless-shell"
 chmod 0700 "$browser"
 
-# Resolve/download trusted Debian packages only. No package installation,
+# Standard hosted runners often have all linked libraries already. Resolve
+# private dependencies only when needed; never replace the pinned browser.
+ldd "$browser" > "$work/host-linked-libraries.txt" || true
+if grep -q 'not found' "$work/host-linked-libraries.txt"; then
+# Resolve/download trusted Debian/Ubuntu packages only. No package installation,
 # maintainer scripts, system library updates, apt index changes or sudo.
 apt-get --download-only --no-install-recommends -y \
   -o Debug::NoLocking=1 -o "Dir::Cache::archives=$work/apt" \
@@ -33,6 +37,7 @@ apt-get --download-only --no-install-recommends -y \
   libpango-1.0-0 libcairo2 libxcomposite1 libxdamage1 libxfixes3 libxrandr2 libxkbcommon0
 find "$work/apt" -maxdepth 1 -name '*.deb' -type f -print0 |
   while IFS= read -r -d '' package; do dpkg-deb --extract "$package" "$work/libs"; done
+fi
 # Refuse an implicit libc replacement in the private loader path.
 test ! -e "$work/libs/lib/x86_64-linux-gnu/libc.so.6"
 test ! -e "$work/libs/usr/lib/x86_64-linux-gnu/libc.so.6"
