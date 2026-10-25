@@ -338,18 +338,14 @@ export class CdpClient {
     await send('Page.addScriptToEvaluateOnNewDocument', {
       source: scriptSource,
     });
-    // A new page paused before its first document has no runnable main context
-    // yet. Its new-document script is registered above; evaluating now can wait
-    // for the very startup that runIfWaitingForDebugger must release below.
-    // Existing running documents still require an acknowledged evaluation.
-    if (!waitingForDebugger) {
-      const evaluated = await send('Runtime.evaluate', {
-        expression: scriptSource,
-        returnByValue: true,
-        awaitPromise: false,
-      }) as { exceptionDetails?: unknown } | undefined;
-      if (required && evaluated?.exceptionDetails) throw new Error('Page configuration script failed');
-    }
+    // Waiting renderers have already resumed into their local blank/error
+    // document. Configure that live document as well as future navigations.
+    const evaluated = await send('Runtime.evaluate', {
+      expression: scriptSource,
+      returnByValue: true,
+      awaitPromise: false,
+    }) as { exceptionDetails?: unknown } | undefined;
+    if (required && evaluated?.exceptionDetails) throw new Error('Page configuration script failed');
 
     if (required && ![...this.targetSessions.values()].includes(sessionId)) throw new Error('Page detached during configuration');
     if (!waitingForDebugger) await send('Runtime.runIfWaitingForDebugger', {});
@@ -364,13 +360,15 @@ export class CdpClient {
       await this.send('Fetch.disable', {}, sessionId);
     }
     if (this.closed || ![...this.targetSessions.values()].includes(sessionId)) throw new Error('Page detached during configuration');
-    // Register readiness only after every required command has succeeded.
-    this.fingerprintedSessions.add(sessionId);
-    if (!this.pageSessions.includes(sessionId)) this.pageSessions.push(sessionId);
     if (gate?.startupNavigation) {
       const result = await this.send('Page.navigate', gate.startupNavigation, sessionId) as { errorText?: string } | undefined;
       if (result?.errorText) throw new Error('New page startup navigation failed');
     }
+    if (this.closed || ![...this.targetSessions.values()].includes(sessionId)) throw new Error('Page detached during configuration');
+    // Replay acknowledgement is part of startup; never expose a failed or
+    // detached provisional page as a configured script/navigation destination.
+    this.fingerprintedSessions.add(sessionId);
+    if (!this.pageSessions.includes(sessionId)) this.pageSessions.push(sessionId);
     this.navigationGates.delete(sessionId);
   }
 

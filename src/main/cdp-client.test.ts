@@ -114,12 +114,12 @@ describe('CDP required page-configuration barrier (no real browser or detector)'
   it('aborts provisional GET before configuring and replaying it through normal navigation', async () => {
     const fatal = vi.fn();
     client = new CdpClient(9222, fingerprint, 'LYCO-Startup-Contract-Test', undefined, fatal);
-    await client.connect(); h.refused = 'Runtime.evaluate'; h.requireResume = true; h.pauseDocument = true;
+    await client.connect(); h.requireResume = true; h.pauseDocument = true;
     attached('session-two', 'page-two', true);
     await vi.waitFor(() => expect(h.commands.some(command => command.sessionId === 'session-two' && command.method === 'Page.navigate')).toBe(true));
     const commands = h.commands.filter(command => command.sessionId === 'session-two').map(command => command.method);
     expect(commands).toContain('Page.addScriptToEvaluateOnNewDocument');
-    expect(commands).not.toContain('Runtime.evaluate');
+    expect(commands.indexOf('Runtime.evaluate')).toBeGreaterThan(commands.indexOf('Runtime.runIfWaitingForDebugger'));
     expect(commands.indexOf('Runtime.runIfWaitingForDebugger')).toBeGreaterThan(commands.indexOf('Fetch.enable'));
     expect(commands.indexOf('Runtime.enable')).toBeGreaterThan(commands.indexOf('Runtime.runIfWaitingForDebugger'));
     expect(commands.indexOf('Fetch.failRequest')).toBeLessThan(commands.indexOf('Runtime.enable'));
@@ -221,12 +221,12 @@ describe('CDP required page-configuration barrier (no real browser or detector)'
     expect(h.sockets[0].readyState).toBe(3);
   });
 
-  it.each(['Network.enable', 'Fetch.disable'])('ignores a page detached during %s without promoting its late result to readiness', async method => {
+  it.each(['Network.enable', 'Fetch.disable', 'Page.navigate'])('ignores a page detached during %s without promoting its late result to readiness', async method => {
     const fatal = vi.fn();
     client = new CdpClient(9222, fingerprint, 'LYCO-Startup-Contract-Test', undefined, fatal);
     await client.connect();
     let finish!: () => void;
-    h.delayedMethod = method; h.delayedSession = 'session-two'; h.pauseDocument = method === 'Fetch.disable';
+    h.delayedMethod = method; h.delayedSession = 'session-two'; h.pauseDocument = method !== 'Network.enable';
     h.delay = new Promise<void>(resolve => { finish = resolve; });
     attached('session-two', 'page-two', h.pauseDocument);
     await vi.waitFor(() => expect(h.commands.some(command => command.sessionId === 'session-two' && command.method === method)).toBe(true));
